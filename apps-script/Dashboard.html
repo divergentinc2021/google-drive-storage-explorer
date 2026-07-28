@@ -1,0 +1,759 @@
+<script>
+/*
+  Dashboard logic.
+
+  NO IIFE — see the banner in Index.html. Everything is top-level so it can see
+  Treemap.html's functions and vice versa.
+*/
+
+var DS_BOOT = null;
+var DS_ALL = [];        // every node, flat — lists + CSV read this
+var DS_BYID = {};
+var DS_TREE = null;     // folded tree — the treemap reads this
+var DS_STACK = [];      // zoom breadcrumb
+var DS_MIMES = [];
+var DS_DEAD_DAYS = 365;
+var DS_SMALL_FLOOR = 1048576;
+var DS_SCANNING = false;
+var DS_DRIVE_STATS = {};   // driveId -> {bytes, files, folders}, measured on demand
+
+var KIND_FOLDER = 0, KIND_BINARY = 1, KIND_NATIVE = 2, KIND_SHORTCUT = 3;
+
+/** rclone can export these natives; the rest have to stay in Drive. */
+var EXPORTABLE = {
+  'document': 'docx', 'spreadsheet': 'xlsx', 'presentation': 'pptx',
+  'drawing': 'svg', 'script': 'json', 'jam': 'pdf'
+};
+
+// ── boot ────────────────────────────────────────────────────────────────────
+function dsInit() {
+  tmInit('map', 'tip', dsZoomTo, dsOpenInDrive);
+
+  document.getElementById('btnScan').addEventListener('click', dsScan);
+  document.getElementById('btnTheme').addEventListener('click', dsToggleTheme);
+  document.getElementById('btnUp').addEventListener('click', dsZoomUp);
+  document.getElementById('btnCsv').addEventListener('click', dsExportCsv);
+  document.getElementById('btnRclone').addEventListener('click', dsShowRclone);
+  document.getElementById('btnTrash').addEventListener('click', dsTrashSelected);
+  document.getElementById('btnMeasure').addEventListener('click', dsMeasureAll);
+  document.getElementById('deadAfter').addEventListener('change', function () {
+    DS_DEAD_DAYS = Number(this.value);
+    dsRenderLists();
+  });
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.seg button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      tmSetMode(b.dataset.mode);
+      document.getElementById('legend').innerHTML = tmLegendHtml();
+    });
+  });
+
+  google.script.run.withSuccessHandler(dsOnBoot)
+    .withFailureHandler(dsFail).getBootstrap();
+}
+
+function dsOnBoot(b) {
+  DS_BOOT = b;
+  DS_DEAD_DAYS = b.config.deadAfterDays || 365;
+  DS_SMALL_FLOOR = b.config.smallFileFloorBytes || 1048576;
+  document.getElementById('deadAfter').value = String(DS_DEAD_DAYS);
+  document.getElementById('acct').textContent =
+    b.user + ' · ' + tmFmtBytes(b.quota.usage) +
+    (b.quota.limit ? ' of ' + tmFmtBytes(b.quota.limit) : '') + ' used';
+
+  var sel = document.getElementById('scope');
+  (b.drives || []).forEach(function (d) {
+    var o = document.createElement('option');
+    o.value = 'drive:' + d.id;
+    o.textContent = 'Shared drive: ' + d.name;
+    sel.appendChild(o);
+  });
+
+  dsRenderQuota();   // account figures need no scan — show them immediately
+  dsRenderTiles();
+  dsRenderDrives();
+  dsRenderGateNote();
+  document.getElementById('legend').innerHTML = tmLegendHtml();
+}
+
+function dsFail(err) {
+  DS_SCANNING = false;
+  document.getElementById('progress').hidden = true;
+  document.getElementById('btnScan').disabled = false;
+  dsDialog('<h3>Something went wrong</h3><pre>' + dsEsc(String(err && err.message || err)) + '</pre>');
+}
+
+// ── scan ────────────────────────────────────────────────────────────────────
+function dsScan() {
+  if (DS_SCANNING) return;
+  DS_SCANNING = true;
+  DS_ALL = []; DS_BYID = {}; DS_MIMES = []; DS_STACK = [];
+  document.getElementById('btnScan').disabled = true;
+  document.getElementById('progress').hidden = false;
+  document.getElementById('mapEmpty').hidden = true;
+  dsProgress(0, 'Starting…');
+
+  var raw = document.getElementById('scope').value;
+  var opts = { scope: 'owned' };
+  if (raw === 'all') opts.scope = 'all';
+  else if (raw.indexOf('drive:') === 0) { opts.scope = 'all'; opts.driveId = raw.slice(6); }
+
+  dsScanStep(opts, 0);
+}
+
+function dsScanStep(opts, seen) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      // Each chunk ships its own mime dictionary; remap into the global table.
+      var remap = res.mimes.map(function (m) {
+        var at = DS_MIMES.indexOf(m);
+        if (at === -1) { DS_MIMES.push(m); return DS_MIMES.length - 1; }
+        return at;
+      });
+
+      res.items.forEach(function (t) {
+        var n = {
+          id: t[0], parent: t[1], name: t[2], kind: t[3],
+          self: t[4], bytes: t[4], days: t[5],
+          mime: DS_MIMES[remap[t[6]]] || '',
+          children: [], fileCount: 0, minDays: t[5] < 0 ? 1e9 : t[5]
+        };
+        DS_ALL.push(n);
+        DS_BYID[n.id] = n;
+      });
+
+      var total = seen + res.items.length;
+      dsProgress(res.done ? 100 : Math.min(96, 8 + total / 400),
+        total.toLocaleString() + ' items indexed…');
+
+      if (res.done) dsScanDone();
+      else { opts.pageToken = res.nextPageToken; dsScanStep(opts, total); }
+    })
+    .withFailureHandler(dsFail)
+    .scanChunk(opts);
+}
+
+function dsProgress(pct, txt) {
+  document.getElementById('progBar').style.width = pct + '%';
+  document.getElementById('progText').textContent = txt;
+}
+
+function dsScanDone() {
+  DS_SCANNING = false;
+  document.getElementById('btnScan').disabled = false;
+  dsProgress(100, DS_ALL.length.toLocaleString() + ' items · building map…');
+
+  dsBuildTree();
+  DS_STACK = [DS_TREE];
+  tmSetRoot(DS_TREE);
+  dsRenderCrumbs();
+  dsRenderTiles();
+  dsRenderLists();
+  document.getElementById('legend').innerHTML = tmLegendHtml();
+  setTimeout(function () { document.getElementById('progress').hidden = true; }, 900);
+}
+
+// ── tree ────────────────────────────────────────────────────────────────────
+function dsBuildTree() {
+  var root = {
+    id: '__root__', parent: '', name: 'My Drive', kind: KIND_FOLDER,
+    self: 0, bytes: 0, days: 0, mime: '', children: [], fileCount: 0, minDays: 1e9
+  };
+  DS_BYID['__root__'] = root;
+
+  // Rebuilt after a trash, so children MUST be cleared first — otherwise every
+  // node gets linked a second time and the map doubles.
+  DS_ALL.forEach(function (n) { n.children = []; });
+
+  DS_ALL.forEach(function (n) {
+    var p = DS_BYID[n.parent];
+    if (p && p !== n) p.children.push(n);
+    else root.children.push(n); // orphan / shared-in / top level
+  });
+
+  // Post-order rollup, iterative so a deep tree can't blow the stack.
+  var order = [], stack = [root], seen = {};
+  while (stack.length) {
+    var n = stack.pop();
+    if (seen[n.id]) continue;
+    seen[n.id] = 1;
+    order.push(n);
+    for (var i = 0; i < n.children.length; i++) stack.push(n.children[i]);
+  }
+  for (var k = order.length - 1; k >= 0; k--) {
+    var node = order[k];
+    if (node.kind !== KIND_FOLDER) { node.fileCount = 1; continue; }
+    var b = node.self, fc = 0, md = 1e9;
+    for (var j = 0; j < node.children.length; j++) {
+      var c = node.children[j];
+      b += c.bytes; fc += c.fileCount;
+      if (c.minDays < md) md = c.minDays;
+    }
+    node.bytes = b; node.fileCount = fc;
+    node.minDays = md;
+    node.days = md === 1e9 ? -1 : md; // folder freshness = its most recent file
+  }
+
+  dsFoldSmall(root);
+  DS_TREE = root;
+}
+
+/**
+ * Collapse sub-floor files into one synthetic tile per folder. Without this the
+ * map is a haze of 1px slivers and the actual mass is unreadable.
+ */
+function dsFoldSmall(node) {
+  if (node.kind !== KIND_FOLDER) return;
+  var keep = [], small = [], bytes = 0, md = 1e9;
+  node.children.forEach(function (c) {
+    if (c.kind === KIND_FOLDER) { keep.push(c); dsFoldSmall(c); return; }
+    if (c.bytes < DS_SMALL_FLOOR) { small.push(c); bytes += c.bytes; if (c.minDays < md) md = c.minDays; }
+    else keep.push(c);
+  });
+  if (small.length > 1) {
+    keep.push({
+      id: '__small__' + node.id, parent: node.id, synthetic: true,
+      name: '· ' + small.length.toLocaleString() + ' small files',
+      kind: KIND_BINARY, self: bytes, bytes: bytes,
+      days: md === 1e9 ? -1 : md, minDays: md, mime: '', children: [],
+      fileCount: small.length
+    });
+  } else if (small.length === 1) keep.push(small[0]);
+  node.children = keep;
+}
+
+function dsPath(n) {
+  var parts = [], cur = n, guard = 0;
+  while (cur && guard++ < 64) {
+    parts.unshift(cur.name);
+    cur = DS_BYID[cur.parent];
+    if (cur && cur.id === '__root__') { parts.unshift('My Drive'); break; }
+  }
+  return parts.join('/');
+}
+
+// ── open in Drive ───────────────────────────────────────────────────────────
+/**
+ * `open?id=` resolves for every type — folder, binary, Doc, Sheet — so there is
+ * no need to carry webViewLink through the scan payload just for this.
+ */
+function dsDriveUrl(node) {
+  if (!node) return null;
+  if (node.id === '__root__') return 'https://drive.google.com/drive/my-drive';
+  // The folded "N small files" tile is not a real Drive object — open its folder.
+  if (node.synthetic) return dsDriveUrl(DS_BYID[node.parent]);
+  if (node.kind === KIND_FOLDER) {
+    return 'https://drive.google.com/drive/folders/' + encodeURIComponent(node.id);
+  }
+  return 'https://drive.google.com/open?id=' + encodeURIComponent(node.id);
+}
+
+function dsOpenInDrive(node) {
+  var url = dsDriveUrl(node);
+  if (!url) return;
+  var w = window.open(url, '_blank', 'noopener');
+  // Apps Script serves the UI inside a sandboxed iframe, so a pop-up blocker can
+  // swallow this. Hand over a link rather than failing silently.
+  if (!w) {
+    dsDialog('<h3>Open in Drive</h3><p>The browser blocked the new tab.</p>' +
+      '<p><a href="' + dsEsc(url) + '" target="_blank" rel="noopener">' +
+      dsEsc(node.name || 'Open in Drive') + ' ↗</a></p>');
+  }
+}
+
+// ── zoom ────────────────────────────────────────────────────────────────────
+function dsZoomTo(node) {
+  DS_STACK.push(node);
+  tmSetRoot(node);
+  dsRenderCrumbs();
+}
+function dsZoomUp() {
+  if (DS_STACK.length < 2) return;
+  DS_STACK.pop();
+  tmSetRoot(DS_STACK[DS_STACK.length - 1]);
+  dsRenderCrumbs();
+}
+function dsRenderCrumbs() {
+  var el = document.getElementById('crumbs');
+  el.innerHTML = '';
+  DS_STACK.forEach(function (n, i) {
+    if (i) { var s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; el.appendChild(s); }
+    var b = document.createElement('button');
+    b.textContent = n.name;
+    if (i === DS_STACK.length - 1) b.className = 'cur';
+    b.addEventListener('click', function () {
+      DS_STACK = DS_STACK.slice(0, i + 1);
+      tmSetRoot(n);
+      dsRenderCrumbs();
+    });
+    el.appendChild(b);
+  });
+  document.getElementById('btnUp').disabled = DS_STACK.length < 2;
+}
+
+// ── quota meter ─────────────────────────────────────────────────────────────
+/**
+ * Breaks the account quota into its real parts. The three Drive numbers are not
+ * siblings: `inTrash` is a SUBSET of `inDrive`, and `usage` also counts Gmail
+ * and Photos — so live Drive is inDrive-inTrash, and anything left over after
+ * inDrive is the other Google services.
+ */
+function dsQuotaParts() {
+  var q = DS_BOOT.quota;
+  var live = Math.max(0, q.inDrive - q.inTrash);
+  var other = Math.max(0, q.usage - q.inDrive);
+  var free = q.limit ? Math.max(0, q.limit - q.usage) : 0;
+  return { live: live, trash: q.inTrash, other: other, free: free,
+           usage: q.usage, limit: q.limit, capped: !!q.limit };
+}
+
+function dsRenderQuota() {
+  if (!DS_BOOT) return;
+  var p = dsQuotaParts();
+  var denom = p.capped ? p.limit : (p.usage || 1);
+
+  document.getElementById('quotaHero').innerHTML = p.capped
+    ? dsEsc(tmFmtBytes(p.free)) + ' free <small>of ' + dsEsc(tmFmtBytes(p.limit)) +
+      ' · ' + (100 * p.usage / p.limit).toFixed(1) + '% used</small>'
+    : dsEsc(tmFmtBytes(p.usage)) + ' used <small>· no storage cap published for this account</small>';
+
+  var segs = [
+    { k: 'live', label: 'Drive files (live)', v: p.live, c: 'var(--size-6)' },
+    { k: 'trash', label: 'Drive trash', v: p.trash, c: 'var(--size-4)' },
+    { k: 'other', label: 'Gmail + Photos', v: p.other, c: 'var(--size-2)' }
+  ];
+  if (p.capped) segs.push({ k: 'free', label: 'Free', v: p.free, c: 'var(--grid)' });
+
+  document.getElementById('quotaMeter').innerHTML = segs
+    .filter(function (s) { return s.v > 0; })
+    .map(function (s) {
+      return '<i style="width:' + (100 * s.v / denom).toFixed(3) + '%;background:' + s.c +
+             '" title="' + dsEsc(s.label + ' — ' + tmFmtBytes(s.v)) + '"></i>';
+    }).join('');
+
+  // Every segment is labelled with its value — the meter never relies on colour.
+  document.getElementById('quotaLegend').innerHTML = '<div class="keys">' + segs.map(function (s) {
+    return '<span class="key"><i style="background:' + s.c + '"></i>' +
+           dsEsc(s.label) + ' · ' + dsEsc(tmFmtBytes(s.v)) + '</span>';
+  }).join('') + '</div>';
+
+  document.getElementById('quotaNote').innerHTML =
+    'Google reports one Drive figure of <b>' + dsEsc(tmFmtBytes(DS_BOOT.quota.inDrive)) +
+    '</b> that already includes the trash; the meter splits the two, so “live” plus trash ' +
+    'is that total. Trashed files are <b>still billed</b> until the trash is emptied. ' +
+    (p.capped ? '' : 'Workspace pooled storage publishes no per-user cap, so there is no “free” figure to show. ') +
+    'Shared drives are excluded — they bill to their own pool.';
+}
+
+// ── tiles ───────────────────────────────────────────────────────────────────
+function dsRenderTiles() {
+  if (!DS_BOOT) return;
+  var q = DS_BOOT.quota;
+  var tiles = [
+    { k: 'In Drive', v: tmFmtBytes(q.inDrive), n: 'live files + trash' },
+    { k: 'In trash', v: tmFmtBytes(q.inTrash), n: 'still billed — empty it to reclaim' },
+    { k: 'Shared drives', v: (DS_BOOT.driveCount || 0).toLocaleString(),
+      n: 'billed separately from your quota' }
+  ];
+  if (DS_TREE) {
+    var s = dsSummary();
+    tiles.splice(2, 0,
+      { k: 'Dead & reclaimable', v: tmFmtBytes(s.deadBytes),
+        n: s.deadFiles.toLocaleString() + ' binaries idle > ' + dsDaysLabel(DS_DEAD_DAYS) },
+      { k: 'Google-native files', v: s.nativeCount.toLocaleString(),
+        n: 'export job — frees ~0 space' },
+      { k: 'Indexed', v: s.fileTotal.toLocaleString() + ' files',
+        n: 'in ' + s.folderTotal.toLocaleString() + ' folders · this scan only' });
+  }
+  document.getElementById('tiles').innerHTML = tiles.map(function (t) {
+    return '<div class="tile"><div class="k">' + dsEsc(t.k) + '</div><div class="v">' +
+           dsEsc(t.v) + '</div><div class="n">' + dsEsc(t.n) + '</div></div>';
+  }).join('');
+}
+
+function dsDaysLabel(d) {
+  if (d >= 365) return (d / 365) + (d === 365 ? ' year' : ' years');
+  return (d / 30) + ' months';
+}
+
+function dsSummary() {
+  var s = { deadBytes: 0, deadFiles: 0, nativeCount: 0, nativeExportable: 0,
+            nativeStuck: 0, activeBytes: 0, activeFiles: 0, shortcuts: 0,
+            fileTotal: 0, folderTotal: 0 };
+  DS_ALL.forEach(function (n) {
+    if (n.kind === KIND_FOLDER) { s.folderTotal++; return; }
+    s.fileTotal++;
+    if (n.kind === KIND_SHORTCUT) { s.shortcuts++; return; }
+    if (n.kind === KIND_NATIVE) {
+      s.nativeCount++;
+      if (dsExportAs(n.mime)) s.nativeExportable++; else s.nativeStuck++;
+      return;
+    }
+    if (n.days >= DS_DEAD_DAYS) { s.deadBytes += n.bytes; s.deadFiles++; }
+    else { s.activeBytes += n.bytes; s.activeFiles++; }
+  });
+  return s;
+}
+
+function dsExportAs(mime) {
+  if (!mime || mime.indexOf('application/vnd.google-apps.') !== 0) return null;
+  var key = mime.slice(28);
+  return EXPORTABLE[key] || null;
+}
+
+// ── lists ───────────────────────────────────────────────────────────────────
+function dsRenderLists() {
+  if (!DS_TREE) return;
+  dsRenderTiles();
+  dsRenderDead();
+  dsRenderClasses();
+  dsRenderTypes();
+  dsRenderBig();
+}
+
+function dsRenderDead() {
+  var dead = DS_ALL.filter(function (n) {
+    return n.kind === KIND_FOLDER && n.fileCount > 0 &&
+           n.minDays >= DS_DEAD_DAYS && n.bytes > 0;
+  });
+  // Keep only the topmost dead folder of any dead chain — listing a dead
+  // folder AND all its dead children is noise, and moving the parent moves them.
+  var ids = {};
+  dead.forEach(function (n) { ids[n.id] = 1; });
+  var tops = dead.filter(function (n) { return !ids[n.parent]; })
+                 .sort(function (a, b) { return b.bytes - a.bytes; });
+
+  document.getElementById('deadCount').textContent =
+    '· ' + tops.length.toLocaleString() + ' (' + tmFmtBytes(tops.reduce(function (a, n) { return a + n.bytes; }, 0)) + ')';
+
+  var el = document.getElementById('deadList');
+  if (!tops.length) { el.innerHTML = '<div class="empty-list">No folders fully idle past this threshold.</div>'; return; }
+  el.innerHTML = tops.slice(0, 200).map(function (n) {
+    return '<div class="row"><span class="pill serious">⇠ move</span>' +
+      '<span class="nm">' + dsEsc(n.name) + '<small>' + dsEsc(dsPath(n)) + ' · ' +
+      n.fileCount.toLocaleString() + ' files</small></span>' +
+      '<span class="sz">' + tmFmtBytes(n.bytes) + '</span>' +
+      '<span class="ag">' + tmFmtDays(n.minDays) + '</span>' +
+      '<a class="open" href="' + dsEsc(dsDriveUrl(n)) + '" target="_blank" rel="noopener" ' +
+      'title="Open this folder in Drive">↗</a></div>';
+  }).join('');
+}
+
+function dsRenderClasses() {
+  var s = dsSummary();
+  var rows = [
+    { pill: 'critical', icon: '⨯', t: 'Dead binaries', n: s.deadFiles,
+      b: s.deadBytes, d: 'Move to NAS, then trash. This is the only row that frees quota.' },
+    { pill: 'good', icon: '✓', t: 'Active binaries', n: s.activeFiles,
+      b: s.activeBytes, d: 'Touched recently — leave in Drive.' },
+    { pill: 'warning', icon: '⤓', t: 'Native, exportable', n: s.nativeExportable,
+      b: 0, d: 'rclone exports these as docx/xlsx/pptx. Copy for backup; deleting frees nothing.' },
+    { pill: 'serious', icon: '⚑', t: 'Native, not exportable', n: s.nativeStuck,
+      b: 0, d: 'Forms, Sites, My Maps — no export path. These must stay in Drive.' },
+    { pill: 'good', icon: '↗', t: 'Shortcuts', n: s.shortcuts,
+      b: 0, d: 'Pointers only — zero storage.' }
+  ];
+  document.getElementById('classList').innerHTML = rows.map(function (r) {
+    return '<div class="row"><span class="pill ' + r.pill + '">' + r.icon + ' ' + dsEsc(r.t) + '</span>' +
+      '<span class="nm"><small>' + dsEsc(r.d) + '</small></span>' +
+      '<span class="sz">' + (r.b ? tmFmtBytes(r.b) : '~0') + '</span>' +
+      '<span class="ag">' + r.n.toLocaleString() + (r.n === 1 ? ' file' : ' files') + '</span></div>';
+  }).join('');
+}
+
+// ── storage by file type ────────────────────────────────────────────────────
+function dsTypeLabel(n) {
+  if (n.kind === KIND_SHORTCUT) return 'shortcut';
+  if (n.kind === KIND_NATIVE) return 'Google ' + (n.mime.slice(28) || 'file');
+  var m = /\.([A-Za-z0-9]{1,6})$/.exec(n.name || '');
+  if (m) return m[1].toLowerCase();
+  return tmShortMime(n.mime);
+}
+
+function dsRenderTypes() {
+  var agg = {};
+  DS_ALL.forEach(function (n) {
+    if (n.kind === KIND_FOLDER || n.synthetic) return;
+    var k = dsTypeLabel(n);
+    if (!agg[k]) agg[k] = { ext: k, bytes: 0, count: 0 };
+    agg[k].bytes += n.bytes;
+    agg[k].count++;
+  });
+  var rows = Object.keys(agg).map(function (k) { return agg[k]; })
+    .sort(function (a, b) { return b.bytes - a.bytes || b.count - a.count; })
+    .slice(0, 14);
+
+  var el = document.getElementById('typeList');
+  if (!rows.length) { el.innerHTML = '<div class="empty-list">Run a scan first.</div>'; return; }
+  var max = rows[0].bytes || 1;
+  el.innerHTML = rows.map(function (r) {
+    var pct = Math.max(r.bytes > 0 ? 2 : 0, 100 * r.bytes / max);
+    return '<div class="row"><span class="ext">' + dsEsc(r.ext) + '</span>' +
+      '<span class="bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
+      '<span class="nm"></span>' +
+      '<span class="sz">' + (r.bytes ? tmFmtBytes(r.bytes) : '~0') + '</span>' +
+      '<span class="num">' + r.count.toLocaleString() + '</span></div>';
+  }).join('');
+}
+
+// ── shared drives ───────────────────────────────────────────────────────────
+function dsRenderDrives() {
+  var drives = (DS_BOOT && DS_BOOT.drives) || [];
+  document.getElementById('driveCount').textContent = '· ' + drives.length;
+  var el = document.getElementById('driveList');
+  if (!drives.length) {
+    el.innerHTML = '<div class="empty-list">No shared drives reachable from this account.</div>';
+    document.getElementById('btnMeasure').disabled = true;
+    return;
+  }
+  el.innerHTML = drives.map(function (d) {
+    var m = DS_DRIVE_STATS[d.id];
+    return '<div class="row" data-drive="' + dsEsc(d.id) + '">' +
+      '<span class="nm">' + dsEsc(d.name) + '<small class="dstat">' +
+      (m ? m.files.toLocaleString() + ' files · ' + m.folders.toLocaleString() + ' folders'
+         : 'not measured') + '</small></span>' +
+      '<span class="sz dsize">' + (m ? tmFmtBytes(m.bytes) : '—') + '</span>' +
+      '<button class="btn ghost sm btnmeasure">' + (m ? 'Re-measure' : 'Measure') + '</button>' +
+      '<a class="open" href="https://drive.google.com/drive/folders/' + dsEsc(d.id) +
+      '" target="_blank" rel="noopener" title="Open this shared drive">↗</a></div>';
+  }).join('');
+  el.querySelectorAll('.btnmeasure').forEach(function (b) {
+    b.addEventListener('click', function () {
+      dsMeasureDrive(b.closest('.row').dataset.drive);
+    });
+  });
+}
+
+function dsMeasureDrive(driveId, onDone) {
+  var row = document.querySelector('#driveList .row[data-drive="' + driveId + '"]');
+  var btn = row && row.querySelector('.btnmeasure');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  var acc = { bytes: 0, files: 0, folders: 0 };
+
+  function step(token) {
+    google.script.run
+      .withSuccessHandler(function (r) {
+        acc.bytes += r.bytes; acc.files += r.files; acc.folders += r.folders;
+        if (row) {
+          row.querySelector('.dsize').textContent = tmFmtBytes(acc.bytes);
+          row.querySelector('.dstat').textContent = r.done
+            ? acc.files.toLocaleString() + ' files · ' + acc.folders.toLocaleString() + ' folders'
+            : acc.files.toLocaleString() + ' files so far…';
+        }
+        if (!r.done) { step(r.nextPageToken); return; }
+        DS_DRIVE_STATS[driveId] = acc;
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-measure'; }
+        if (onDone) onDone();
+      })
+      .withFailureHandler(function (e) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+        if (row) row.querySelector('.dstat').textContent = 'failed: ' + (e && e.message || e);
+        if (onDone) onDone();
+      })
+      .measureDriveChunk({ driveId: driveId, pageToken: token });
+  }
+  step(null);
+}
+
+/** Sequential, not parallel — each drive scan is already a paginated server loop. */
+function dsMeasureAll() {
+  var drives = (DS_BOOT && DS_BOOT.drives) || [];
+  var btn = document.getElementById('btnMeasure');
+  btn.disabled = true; btn.textContent = 'Measuring…';
+  var i = 0;
+  function next() {
+    if (i >= drives.length) { btn.disabled = false; btn.textContent = 'Re-measure all'; return; }
+    dsMeasureDrive(drives[i++].id, next);
+  }
+  next();
+}
+
+function dsBigCandidates() {
+  return DS_ALL.filter(function (n) {
+    return n.kind === KIND_BINARY && n.days >= DS_DEAD_DAYS && n.bytes > 0;
+  }).sort(function (a, b) { return b.bytes - a.bytes; });
+}
+
+function dsRenderBig() {
+  var rows = dsBigCandidates().slice(0, 300);
+  var el = document.getElementById('bigList');
+  if (!rows.length) { el.innerHTML = '<div class="empty-list">Nothing idle past this threshold.</div>'; return; }
+  // A <label> would hijack the open-link click into a checkbox toggle, so the
+  // row is a div and the toggle is wired explicitly.
+  el.innerHTML = rows.map(function (n) {
+    return '<div class="row pick"><input type="checkbox" data-id="' + dsEsc(n.id) + '">' +
+      '<span class="nm">' + dsEsc(n.name) + '<small>' + dsEsc(dsPath(n)) + ' · ' +
+      dsEsc(tmShortMime(n.mime)) + '</small></span>' +
+      '<span class="sz">' + tmFmtBytes(n.bytes) + '</span>' +
+      '<span class="ag">' + tmFmtDays(n.days) + '</span>' +
+      '<a class="open" href="' + dsEsc(dsDriveUrl(n)) + '" target="_blank" rel="noopener" ' +
+      'title="Open this file in Drive">↗</a></div>';
+  }).join('');
+  el.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+    cb.addEventListener('change', dsUpdateTrashBtn);
+  });
+  el.querySelectorAll('.row.pick').forEach(function (row) {
+    row.addEventListener('click', function (ev) {
+      if (ev.target.closest('a.open') || ev.target.tagName === 'INPUT') return;
+      var cb = row.querySelector('input[type=checkbox]');
+      cb.checked = !cb.checked;
+      dsUpdateTrashBtn();
+    });
+  });
+  dsUpdateTrashBtn();
+}
+
+function dsSelectedIds() {
+  return Array.prototype.slice
+    .call(document.querySelectorAll('#bigList input[type=checkbox]:checked'))
+    .map(function (cb) { return cb.dataset.id; });
+}
+
+function dsUpdateTrashBtn() {
+  var ids = dsSelectedIds();
+  var btn = document.getElementById('btnTrash');
+  btn.disabled = !ids.length;
+  var bytes = ids.reduce(function (a, id) { return a + ((DS_BYID[id] || {}).bytes || 0); }, 0);
+  btn.textContent = ids.length
+    ? 'Move ' + ids.length + ' file' + (ids.length > 1 ? 's' : '') + ' (' + tmFmtBytes(bytes) + ') to Drive trash'
+    : 'Move selected to Drive trash';
+}
+
+function dsRenderGateNote() {
+  var el = document.getElementById('gateNote');
+  if (DS_BOOT && DS_BOOT.caps.nasVerify) {
+    el.innerHTML = '<b>NAS verification is ON.</b> The server will refuse to trash any file the ' +
+      'QNAP agent has not reported as backed up.';
+  } else {
+    el.innerHTML = '<b>NAS verification is OFF</b> — the QNAP agent is not reporting yet, so nothing here ' +
+      'is confirmed backed up. Trash is reversible and Drive keeps it for 30 days, but it still ' +
+      'counts against quota until you empty it. Copy to the NAS first, verify, then empty the trash by hand.';
+  }
+}
+
+// ── actions ─────────────────────────────────────────────────────────────────
+function dsTrashSelected() {
+  var ids = dsSelectedIds();
+  if (!ids.length) return;
+  var bytes = ids.reduce(function (a, id) { return a + ((DS_BYID[id] || {}).bytes || 0); }, 0);
+  var msg = 'Move ' + ids.length + ' file(s), ' + tmFmtBytes(bytes) + ', to the Drive trash?\n\n' +
+    'This is reversible — Drive holds trashed files for 30 days.\n' +
+    'Quota is NOT freed until the trash is emptied, which this tool never does.' +
+    (DS_BOOT && DS_BOOT.caps.nasVerify ? '' :
+      '\n\nNAS verification is OFF: these files are not confirmed backed up.');
+  if (!window.confirm(msg)) return;
+
+  var btn = document.getElementById('btnTrash');
+  btn.disabled = true; btn.textContent = 'Working…';
+  google.script.run
+    .withSuccessHandler(function (r) {
+      // Report what the SERVER says it did — never assume the request succeeded.
+      var lines = ['<h3>Result</h3><p>Trashed: <b>' + r.trashed.length + '</b></p>'];
+      if (r.skipped.length) lines.push('<p>Skipped (not confirmed on NAS): <b>' + r.skipped.length + '</b></p>');
+      if (r.failed.length) {
+        lines.push('<p>Failed: <b>' + r.failed.length + '</b></p><pre>' +
+          dsEsc(r.failed.map(function (f) { return f.id + ' — ' + f.reason; }).join('\n')) + '</pre>');
+      }
+      lines.push('<p>Quota is unchanged until you empty the Drive trash manually.</p>');
+      dsDialog(lines.join(''));
+      r.trashed.forEach(function (id) {
+        var i = DS_ALL.indexOf(DS_BYID[id]);
+        if (i > -1) DS_ALL.splice(i, 1);
+        delete DS_BYID[id];
+      });
+      dsBuildTree();
+      DS_STACK = [DS_TREE];
+      tmSetRoot(DS_TREE);
+      dsRenderCrumbs();
+      dsRenderLists();
+    })
+    .withFailureHandler(function (e) { dsUpdateTrashBtn(); dsFail(e); })
+    .trashFiles(ids);
+}
+
+function dsExportCsv() {
+  if (!DS_ALL.length) { dsDialog('<p>Run a scan first.</p>'); return; }
+  var rows = [];
+  DS_ALL.forEach(function (n) {
+    if (n.kind === KIND_FOLDER || n.synthetic) return;
+    var cls, action, exp = '';
+    if (n.kind === KIND_SHORTCUT) { cls = 'shortcut'; action = 'ignore'; }
+    else if (n.kind === KIND_NATIVE) {
+      exp = dsExportAs(n.mime) || '';
+      cls = exp ? 'native-exportable' : 'native-stuck';
+      action = exp ? 'export-copy-to-nas' : 'keep-in-drive';
+    } else if (n.days >= DS_DEAD_DAYS) { cls = 'binary-dead'; action = 'move-to-nas-then-trash'; }
+    else { cls = 'binary-active'; action = 'keep'; }
+    rows.push({ id: n.id, name: n.name, path: dsPath(n), cls: cls, mime: n.mime,
+                bytes: n.bytes, days: n.days, action: action, exportAs: exp });
+  });
+
+  google.script.run.withSuccessHandler(function (csv) {
+    try {
+      var blob = new Blob([csv], { type: 'text/csv' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'studiodrive-manifest.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) {
+      dsDialog('<h3>Manifest (copy it out)</h3><pre>' + dsEsc(csv.slice(0, 200000)) + '</pre>');
+    }
+  }).withFailureHandler(dsFail).buildManifestCsv(rows);
+}
+
+function dsShowRclone() {
+  var fmts = (DS_BOOT && DS_BOOT.config.exportFormats) || 'docx,xlsx,pptx,svg';
+  var maps = (DS_BOOT && DS_BOOT.config.mappings) || [];
+  var target = maps.length ? maps[0].nasPath : '/share/GDriveBackup/studiouih';
+  var src = maps.length && maps[0].driveFolderPath ? maps[0].driveFolderPath : '';
+
+  var h = [];
+  h.push('<h3>1 · One-time, on the QNAP (Container Station or Entware)</h3>');
+  h.push('<pre>rclone config     # new remote, type: drive, name: gdrive\n' +
+         '                  # sign in as studiouih@uwc.ac.za, scope: drive.readonly</pre>');
+  h.push('<h3>2 · Pull Drive down to the NAS</h3>');
+  h.push('<pre>rclone sync gdrive:' + dsEsc(src) + ' ' + dsEsc(target) + ' \\\n' +
+         '  --drive-export-formats ' + dsEsc(fmts) + ' \\\n' +
+         '  --drive-acknowledge-abuse --fast-list --checksum \\\n' +
+         '  --transfers 8 --checkers 16 \\\n' +
+         '  --log-file /share/logs/rclone-gdrive.log --log-level INFO</pre>');
+  h.push('<p><code>--drive-export-formats</code> is the flag that answers the native-file ' +
+         'problem: Docs/Sheets/Slides land on the NAS as real .docx/.xlsx/.pptx.</p>');
+  h.push('<h3>3 · Schedule it</h3>');
+  h.push('<pre># QNAP wipes a plain `crontab -e` on reboot — edit the config file instead\n' +
+         'echo "30 2 * * * /opt/bin/rclone sync gdrive: ' + dsEsc(target) +
+         ' --drive-export-formats ' + dsEsc(fmts) + '" >> /etc/config/crontab\n' +
+         'crontab /etc/config/crontab && /etc/init.d/crond.sh restart</pre>');
+  h.push('<p>Verify a restore before you empty any Drive trash. Full setup and the ' +
+         'poll-agent protocol are in <code>docs/QNAP_SYNC.md</code>.</p>');
+  dsDialog(h.join(''));
+}
+
+function dsDialog(html) {
+  document.getElementById('dlgBody').innerHTML = html;
+  var d = document.getElementById('dlg');
+  if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+}
+
+function dsToggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme');
+  if (!cur) {
+    var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    cur = sysDark ? 'dark' : 'light';
+  }
+  r.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  if (DS_TREE) tmDraw();
+  document.getElementById('legend').innerHTML = tmLegendHtml();
+}
+
+function dsEsc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', dsInit);
+else dsInit();
+</script>

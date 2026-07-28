@@ -1,0 +1,363 @@
+<script>
+/*
+  Treemap engine — squarified layout (Bruls/Huizing/van Wijk) on a canvas.
+
+  NO IIFE. Everything here is a top-level `var` / `function` so Dashboard.html
+  can actually see it. Wrapping this in an IIFE would make every call from the
+  next script block throw ReferenceError inside a handler — i.e. a dead button
+  with nothing in the console until you go looking.
+*/
+
+var TM_CANVAS = null, TM_CTX = null, TM_TIP = null;
+var TM_ROOT = null;          // node currently filling the canvas
+var TM_MODE = 'size';        // 'size' | 'age'
+var TM_RECTS = [];           // hit-test index, draw order
+var TM_RAMP_SIZE = [], TM_RAMP_AGE = [];
+var TM_MAXBYTES = 1;
+var TM_LOGMIN = 0, TM_LOGMAX = 1;  // log-range of the leaves on screen
+var TM_ONZOOM = null;        // set by Dashboard
+var TM_ONOPEN = null;        // set by Dashboard — double-click opens in Drive
+var TM_HOVER = null;
+var TM_CLICK_TIMER = null;   // single-click zoom, cancelled by a double-click
+
+var TM_MAX_DEPTH = 3;
+var TM_MIN_TILE = 3;         // px — below this nothing is drawn
+var TM_MIN_RECURSE = 34;     // px — below this a folder is drawn flat
+var TM_HEADER = 15;          // px — folder title strip
+
+/** Age bands. Ordered, so the ramp is ordinal (one hue), never categorical. */
+var TM_AGE_BANDS = [
+  { max: 30,    label: 'under a month' },
+  { max: 90,    label: '1–3 months' },
+  { max: 180,   label: '3–6 months' },
+  { max: 365,   label: '6–12 months' },
+  { max: 1e9,   label: 'over a year' }
+];
+
+function tmFmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  var u = ['KB', 'MB', 'GB', 'TB', 'PB'], i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return (n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + ' ' + u[i];
+}
+
+function tmFmtDays(d) {
+  if (d < 0) return 'unknown';
+  if (d === 0) return 'today';
+  if (d < 30) return d + 'd ago';
+  if (d < 365) return Math.round(d / 30) + 'mo ago';
+  var y = (d / 365);
+  return (y < 10 ? y.toFixed(1) : y.toFixed(0)) + 'y ago';
+}
+
+/** Read the validated ramps out of CSS so light/dark switching is automatic. */
+function tmReadRamps() {
+  var cs = getComputedStyle(document.getElementById('app'));
+  TM_RAMP_SIZE = [];
+  for (var i = 0; i < 8; i++) TM_RAMP_SIZE.push(cs.getPropertyValue('--size-' + i).trim());
+  TM_RAMP_AGE = [];
+  for (var j = 0; j < 5; j++) TM_RAMP_AGE.push(cs.getPropertyValue('--age-' + j).trim());
+}
+
+/**
+ * Sizes are log-normal, so the scale is logarithmic — but it must also be
+ * normalised against the range ACTUALLY ON SCREEN, not against the drive total.
+ * Normalising against the total made every file land on step 6-7 (a 5 GB file
+ * over a 304 GB root is log-ratio .85) and painted the entire map one red.
+ * Anchoring to the visible min/max is what makes the ramp discriminate.
+ */
+function tmColorForSize(bytes) {
+  if (!bytes) return TM_RAMP_SIZE[0];
+  var lo = TM_LOGMIN, hi = TM_LOGMAX;
+  var t = hi > lo ? (Math.log(bytes) - lo) / (hi - lo) : 1;
+  var i = Math.round(Math.max(0, Math.min(1, t)) * (TM_RAMP_SIZE.length - 1));
+  return TM_RAMP_SIZE[i];
+}
+
+/** Log-range of the leaves currently laid out. Recomputed every draw. */
+function tmComputeScale() {
+  var lo = Infinity, hi = -Infinity;
+  for (var i = 0; i < TM_RECTS.length; i++) {
+    var r = TM_RECTS[i];
+    if (r.depth === 0) continue;
+    var n = r.node;
+    if (n.kind === 0 && n.children && n.children.length) continue; // containers
+    if (!(n.bytes > 0)) continue;
+    var v = Math.log(n.bytes);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!isFinite(lo) || !isFinite(hi)) { TM_LOGMIN = 0; TM_LOGMAX = 1; return; }
+  // Clamp the span so a drive of near-identical files still shows contrast
+  // instead of collapsing onto one step.
+  if (hi - lo < 1.6) lo = hi - 1.6;
+  TM_LOGMIN = lo; TM_LOGMAX = hi;
+}
+function tmAgeBand(days) {
+  if (days < 0) return 0;
+  for (var i = 0; i < TM_AGE_BANDS.length; i++) if (days < TM_AGE_BANDS[i].max) return i;
+  return TM_AGE_BANDS.length - 1;
+}
+function tmColorForNode(n) {
+  return TM_MODE === 'age' ? TM_RAMP_AGE[tmAgeBand(n.days)] : tmColorForSize(n.bytes);
+}
+
+// ── squarified layout ───────────────────────────────────────────────────────
+function tmWorst(row, sum, short) {
+  var mx = -Infinity, mn = Infinity;
+  for (var i = 0; i < row.length; i++) { if (row[i] > mx) mx = row[i]; if (row[i] < mn) mn = row[i]; }
+  var s2 = sum * sum, sh2 = short * short;
+  if (!s2 || !mn) return Infinity;
+  return Math.max((sh2 * mx) / s2, s2 / (sh2 * mn));
+}
+
+/**
+ * @param {Array} nodes sorted by bytes DESC
+ * @return {Array} [{x,y,w,h,node}]
+ */
+function tmSquarify(nodes, x, y, w, h) {
+  var out = [];
+  var total = 0, k;
+  for (k = 0; k < nodes.length; k++) total += nodes[k].bytes;
+  if (total <= 0 || w <= 0 || h <= 0) return out;
+
+  var scale = (w * h) / total;
+  var areas = nodes.map(function (n) { return n.bytes * scale; });
+  var i = 0;
+
+  while (i < areas.length && w > .5 && h > .5) {
+    var short = Math.min(w, h);
+    var row = [areas[i]], sum = areas[i], j = i + 1;
+    while (j < areas.length) {
+      var next = row.concat([areas[j]]);
+      if (tmWorst(row, sum, short) >= tmWorst(next, sum + areas[j], short)) {
+        row = next; sum += areas[j]; j++;
+      } else break;
+    }
+    var thick = sum / short, off = 0;
+    for (k = 0; k < row.length; k++) {
+      var len = thick > 0 ? row[k] / thick : 0;
+      if (w >= h) out.push({ x: x, y: y + off, w: thick, h: len, node: nodes[i + k] });
+      else        out.push({ x: x + off, y: y, w: len, h: thick, node: nodes[i + k] });
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+    i = j;
+  }
+  return out;
+}
+
+// ── recursive layout ────────────────────────────────────────────────────────
+function tmLayout(node, rect, depth) {
+  if (rect.w < TM_MIN_TILE || rect.h < TM_MIN_TILE) return;
+  TM_RECTS.push({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, node: node, depth: depth });
+
+  var kids = node.children;
+  if (!kids || !kids.length) return;
+  if (depth >= TM_MAX_DEPTH) return;
+  if (rect.w < TM_MIN_RECURSE || rect.h < TM_MIN_RECURSE) return;
+
+  var pad = depth === 0 ? 0 : 1;
+  var head = (rect.h > TM_HEADER * 2.2 && rect.w > 48) ? TM_HEADER : 0;
+  var inner = {
+    x: rect.x + pad,
+    y: rect.y + pad + head,
+    w: rect.w - pad * 2,
+    h: rect.h - pad * 2 - head
+  };
+  if (inner.w < TM_MIN_TILE || inner.h < TM_MIN_TILE) return;
+
+  var sorted = kids.filter(function (c) { return c.bytes > 0; })
+                   .sort(function (a, b) { return b.bytes - a.bytes; });
+  tmSquarify(sorted, inner.x, inner.y, inner.w, inner.h)
+    .forEach(function (r) { tmLayout(r.node, r, depth + 1); });
+}
+
+// ── render ──────────────────────────────────────────────────────────────────
+function tmResize() {
+  if (!TM_CANVAS) return;
+  var dpr = window.devicePixelRatio || 1;
+  var r = TM_CANVAS.getBoundingClientRect();
+  TM_CANVAS.width = Math.max(1, Math.round(r.width * dpr));
+  TM_CANVAS.height = Math.max(1, Math.round(r.height * dpr));
+  TM_CTX.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function tmDraw() {
+  if (!TM_CANVAS || !TM_ROOT) return;
+  tmReadRamps();
+  tmResize();
+  var cs = getComputedStyle(document.getElementById('app'));
+  var stroke = cs.getPropertyValue('--tile-stroke').trim();
+  var ink = cs.getPropertyValue('--tile-label').trim();
+  var plane = cs.getPropertyValue('--plane').trim();
+
+  var W = TM_CANVAS.clientWidth, H = TM_CANVAS.clientHeight;
+  TM_CTX.clearRect(0, 0, W, H);
+  TM_CTX.fillStyle = plane;
+  TM_CTX.fillRect(0, 0, W, H);
+
+  TM_RECTS = [];
+  TM_MAXBYTES = Math.max(1, TM_ROOT.bytes);
+  tmLayout(TM_ROOT, { x: 0, y: 0, w: W, h: H }, 0);
+  tmComputeScale(); // must run after layout, before any fill
+
+  for (var i = 0; i < TM_RECTS.length; i++) {
+    var r = TM_RECTS[i], n = r.node;
+    if (r.depth === 0) continue; // the frame itself needs no fill
+
+    var isFolder = n.kind === 0 && n.children && n.children.length;
+    TM_CTX.fillStyle = tmColorForNode(n);
+    TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+
+    // 2px surface gap between fills, drawn as a stroke on the shared edge
+    if (r.w > 4 && r.h > 4) {
+      TM_CTX.strokeStyle = stroke;
+      TM_CTX.lineWidth = r.depth === 1 ? 2 : 1;
+      TM_CTX.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    }
+
+    // Selective direct labels only — never a label on every tile.
+    if (r.w > 54 && r.h > 17) {
+      TM_CTX.save();
+      TM_CTX.beginPath();
+      TM_CTX.rect(r.x + 3, r.y + 1, r.w - 6, r.h - 2);
+      TM_CTX.clip();
+      TM_CTX.fillStyle = ink;
+      TM_CTX.globalAlpha = isFolder ? .92 : .78;
+      TM_CTX.font = (isFolder ? '600 ' : '') + '11px system-ui, -apple-system, sans-serif';
+      TM_CTX.textBaseline = 'top';
+      TM_CTX.fillText(n.name, r.x + 5, r.y + 3, r.w - 10);
+      if (r.h > 32 && r.w > 74) {
+        TM_CTX.globalAlpha = .6;
+        TM_CTX.font = '10px system-ui, -apple-system, sans-serif';
+        TM_CTX.fillText(tmFmtBytes(n.bytes), r.x + 5, r.y + 17, r.w - 10);
+      }
+      TM_CTX.restore();
+    }
+  }
+
+  if (TM_HOVER) {
+    TM_CTX.strokeStyle = ink;
+    TM_CTX.lineWidth = 2;
+    TM_CTX.strokeRect(TM_HOVER.x + 1, TM_HOVER.y + 1, TM_HOVER.w - 2, TM_HOVER.h - 2);
+  }
+}
+
+// ── interaction ─────────────────────────────────────────────────────────────
+function tmHit(px, py) {
+  for (var i = TM_RECTS.length - 1; i >= 0; i--) {
+    var r = TM_RECTS[i];
+    if (r.depth > 0 && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return r;
+  }
+  return null;
+}
+
+function tmOnMove(ev) {
+  var b = TM_CANVAS.getBoundingClientRect();
+  var hit = tmHit(ev.clientX - b.left, ev.clientY - b.top);
+  if (hit !== TM_HOVER) { TM_HOVER = hit; tmDraw(); }
+  if (!hit) { TM_TIP.hidden = true; return; }
+
+  var n = hit.node;
+  var share = TM_ROOT.bytes ? (100 * n.bytes / TM_ROOT.bytes) : 0;
+  var rows = [
+    ['Size', tmFmtBytes(n.bytes)],
+    ['Share of view', share.toFixed(share < 1 ? 2 : 1) + '%'],
+    ['Last active', tmFmtDays(n.days)]
+  ];
+  if (n.kind === 0) rows.push(['Contains', (n.fileCount || 0).toLocaleString() + ' files']);
+  else if (n.mime) rows.push(['Type', tmShortMime(n.mime)]);
+
+  TM_TIP.innerHTML = '<div class="t"></div>' + rows.map(function (r) {
+    return '<div class="r"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>';
+  }).join('');
+  TM_TIP.querySelector('.t').textContent = n.name;
+
+  TM_TIP.hidden = false;
+  var box = TM_CANVAS.parentElement.getBoundingClientRect();
+  var tw = TM_TIP.offsetWidth, th = TM_TIP.offsetHeight;
+  var lx = ev.clientX - box.left + 14, ly = ev.clientY - box.top + 14;
+  if (lx + tw > box.width) lx = ev.clientX - box.left - tw - 14;
+  if (ly + th > box.height) ly = ev.clientY - box.top - th - 14;
+  TM_TIP.style.left = Math.max(2, lx) + 'px';
+  TM_TIP.style.top = Math.max(2, ly) + 'px';
+}
+
+function tmOnLeave() { TM_HOVER = null; TM_TIP.hidden = true; tmDraw(); }
+
+function tmNodeAt(ev) {
+  var b = TM_CANVAS.getBoundingClientRect();
+  var hit = tmHit(ev.clientX - b.left, ev.clientY - b.top);
+  return hit ? hit.node : null;
+}
+
+/**
+ * Single click zooms — but it has to wait, because a double-click fires two
+ * `click` events before `dblclick`. Deferring the zoom lets dblclick cancel it,
+ * otherwise every attempt to open a folder would zoom into it first.
+ */
+function tmOnClick(ev) {
+  var n = tmNodeAt(ev);
+  if (!n) return;
+  if (!(n.kind === 0 && n.children && n.children.length && TM_ONZOOM)) return;
+  if (TM_CLICK_TIMER) clearTimeout(TM_CLICK_TIMER);
+  TM_CLICK_TIMER = setTimeout(function () {
+    TM_CLICK_TIMER = null;
+    TM_ONZOOM(n);
+  }, 240);
+}
+
+function tmOnDblClick(ev) {
+  if (TM_CLICK_TIMER) { clearTimeout(TM_CLICK_TIMER); TM_CLICK_TIMER = null; }
+  var n = tmNodeAt(ev);
+  if (n && TM_ONOPEN) TM_ONOPEN(n);
+}
+
+function tmShortMime(m) {
+  if (!m) return '—';
+  if (m.indexOf('application/vnd.google-apps.') === 0) {
+    return 'Google ' + m.slice(28);
+  }
+  var t = m.split('/');
+  return (t[1] || t[0]).replace('vnd.openxmlformats-officedocument.', '')
+                       .replace('wordprocessingml.document', 'docx')
+                       .replace('spreadsheetml.sheet', 'xlsx')
+                       .replace('presentationml.presentation', 'pptx');
+}
+
+function tmSetRoot(node) { TM_ROOT = node; TM_HOVER = null; tmDraw(); }
+function tmSetMode(mode) { TM_MODE = mode; tmDraw(); }
+
+function tmInit(canvasId, tipId, onZoom, onOpen) {
+  TM_CANVAS = document.getElementById(canvasId);
+  TM_CTX = TM_CANVAS.getContext('2d');
+  TM_TIP = document.getElementById(tipId);
+  TM_ONZOOM = onZoom;
+  TM_ONOPEN = onOpen;
+  TM_CANVAS.addEventListener('mousemove', tmOnMove);
+  TM_CANVAS.addEventListener('mouseleave', tmOnLeave);
+  TM_CANVAS.addEventListener('click', tmOnClick);
+  TM_CANVAS.addEventListener('dblclick', tmOnDblClick);
+  window.addEventListener('resize', function () { if (TM_ROOT) tmDraw(); });
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)')
+      .addEventListener('change', function () { if (TM_ROOT) tmDraw(); });
+  }
+}
+
+/** Legend markup for the active mode. Always present — identity is never colour alone. */
+function tmLegendHtml() {
+  if (TM_MODE === 'age') {
+    return '<span>Last activity</span><div class="keys">' + TM_AGE_BANDS.map(function (b, i) {
+      return '<span class="key"><i style="background:var(--age-' + i + ')"></i>' + b.label + '</span>';
+    }).join('') + '</div><span>· double-click a tile to open it in Drive</span>';
+  }
+  var ramp = '';
+  for (var i = 0; i < 8; i++) ramp += '<i style="background:var(--size-' + i + ')"></i>';
+  return '<span>negligible</span><div class="ramp">' + ramp + '</div>' +
+         '<span>largest</span><span style="margin-left:6px">· click a folder to zoom, ' +
+         '<b>double-click to open it in Drive</b>, ↑ Up to go back</span>';
+}
+</script>

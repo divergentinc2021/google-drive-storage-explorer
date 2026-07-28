@@ -1,0 +1,283 @@
+<style>
+/*
+  Colour tokens.
+
+  The two data ramps below were DERIVED AND VALIDATED, not hand-picked
+  (tools/make_ramp.mjs + the dataviz validator). Do not "tidy" them by eye.
+
+  SIZE = sequential, one hue (OKLCH H 25°), monotone L, light→dark.
+    Its lightest step sits at 1.09:1 against the surface on purpose: for a
+    sequential ramp the near-zero end is meant to recede into the surface, so
+    negligible files read as plain grey. That is a documented exemption, NOT an
+    unfixed contrast failure — the 2:1 floor applies to *ordinal* ramps.
+
+  AGE = ordinal (age bands are ordered, so they take one hue, not a rainbow).
+    Blue, passes every ordinal check in both modes.
+*/
+.viz-root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --plane: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, .10);
+  --shadow: 0 1px 2px rgba(11,11,11,.05), 0 8px 24px rgba(11,11,11,.06);
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  --size-0: #f5f1f1; --size-1: #eed4d1; --size-2: #e9b4af; --size-3: #e4948d;
+  --size-4: #dd726b; --size-5: #d34b49; --size-6: #c41e29; --size-7: #a40a1b;
+
+  --age-0: #86b6ef; --age-1: #5598e7; --age-2: #2a78d6; --age-3: #1c5cab; --age-4: #0d366b;
+
+  --tile-stroke: rgba(252,252,251,.85);
+  --tile-label: #0b0b0b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, .10);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
+
+    --size-0: #2a2221; --size-1: #4a2c2a; --size-2: #6c3531; --size-3: #903c39;
+    --size-4: #b64340; --size-5: #da4b49; --size-6: #f55f5b; --size-7: #ff8a82;
+
+    --age-0: #cde2fb; --age-1: #9ec5f4; --age-2: #6da7ec; --age-3: #3987e5; --age-4: #184f95;
+
+    --tile-stroke: rgba(26,26,25,.85);
+    --tile-label: #ffffff;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --plane: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, .10);
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
+
+  --size-0: #2a2221; --size-1: #4a2c2a; --size-2: #6c3531; --size-3: #903c39;
+  --size-4: #b64340; --size-5: #da4b49; --size-6: #f55f5b; --size-7: #ff8a82;
+
+  --age-0: #cde2fb; --age-1: #9ec5f4; --age-2: #6da7ec; --age-3: #3987e5; --age-4: #184f95;
+
+  --tile-stroke: rgba(26,26,25,.85);
+  --tile-label: #ffffff;
+}
+
+* { box-sizing: border-box; }
+/* A class that sets `display` outranks the UA [hidden] rule, so `el.hidden = true`
+   silently does nothing on .progress / .empty / .tip. Restore it globally. */
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--plane); }
+
+.viz-root {
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--plane);
+  color: var(--text-primary);
+  padding: 20px;
+  max-width: 1560px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* ── chrome ─────────────────────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.logo { width: 34px; height: 34px; flex: none; display: block; }
+h1 { font-size: 19px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+h1 .thin { font-weight: 400; color: var(--text-secondary); }
+h2 { font-size: 14px; margin: 0; font-weight: 650; }
+.sub { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
+.topactions { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+.field.inline { flex-direction: row; align-items: center; gap: 6px; }
+select {
+  font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+}
+.btn {
+  font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface-1); color: var(--text-primary); transition: .12s;
+}
+.btn:hover:not(:disabled) { border-color: var(--baseline); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+.btn.primary { background: var(--size-6); border-color: var(--size-6); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--size-7); border-color: var(--size-7); }
+.btn.danger { background: transparent; border-color: var(--critical); color: var(--critical); }
+.btn.danger:hover:not(:disabled) { background: var(--critical); color: #fff; }
+.btn.ghost { background: transparent; }
+
+.progress { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; font-size: 12px; color: var(--text-secondary); }
+.progress .bar { flex: 1; height: 4px; background: var(--grid); border-radius: 99px; overflow: hidden; }
+.progress .bar i { display: block; height: 100%; width: 0; background: var(--size-5); transition: width .2s; }
+
+/* ── stat tiles ─────────────────────────────────────────────────────────── */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow);
+}
+.tile .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.tile .v { font-size: 26px; font-weight: 640; letter-spacing: -.02em; margin: 4px 0 1px; }
+.tile .n { font-size: 12px; color: var(--text-secondary); }
+
+/* ── panels ─────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.panelhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.count { color: var(--muted); font-weight: 400; }
+.hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; }
+.note { font-size: 12px; margin: 0 0 10px; padding: 9px 12px; border-radius: 8px;
+        background: var(--plane); border: 1px solid var(--border); color: var(--text-secondary); }
+.note b { color: var(--text-primary); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+.modes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 12px; padding: 6px 11px; border: 0; cursor: pointer;
+  background: transparent; color: var(--text-secondary);
+}
+.seg button.on { background: var(--text-primary); color: var(--surface-1); }
+
+/* ── quota meter ────────────────────────────────────────────────────────── */
+.quota .hero { font-size: 21px; font-weight: 640; letter-spacing: -.02em; }
+.quota .hero small { font-size: 13px; font-weight: 400; color: var(--text-secondary); }
+/* The 2px gaps are the surface showing through between fills, so the track is
+   surface-coloured and "free" is an explicit segment rather than the gap. */
+.meter {
+  display: flex; gap: 2px; height: 20px; margin: 2px 0 12px;
+  background: var(--surface-1); border-radius: 6px;
+}
+.meter i { display: block; height: 100%; min-width: 3px; }
+.meter i:first-child { border-radius: 6px 0 0 6px; }
+.meter i:last-child { border-radius: 0 6px 6px 0; }
+.meter i:only-child { border-radius: 6px; }
+
+/* ── proportion bars (file types) ───────────────────────────────────────── */
+/* Nominal categories: every bar takes the SAME hue. Colouring them by value
+   would re-encode what the bar length already shows and waste the channel. */
+.bar { flex: none; width: 84px; height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--size-5); border-radius: 4px; }
+.row .ext { flex: none; font-weight: 600; min-width: 62px; }
+.row .num { flex: none; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 12px; min-width: 66px; text-align: right; }
+.row .btnmeasure { flex: none; }
+
+/* ── treemap ────────────────────────────────────────────────────────────── */
+.mapwrap { padding-bottom: 12px; }
+.canvasbox { position: relative; width: 100%; height: 480px; border-radius: 10px; overflow: hidden; background: var(--plane); }
+@media (max-width: 700px) { .canvasbox { height: 340px; } }
+#map { width: 100%; height: 100%; display: block; cursor: pointer; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 5; max-width: 300px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
+  padding: 9px 11px; font-size: 12px; box-shadow: var(--shadow); line-height: 1.45;
+}
+.tip .t { font-weight: 640; margin-bottom: 3px; word-break: break-word; }
+.tip .r { color: var(--text-secondary); display: flex; justify-content: space-between; gap: 14px; }
+.tip .r b { color: var(--text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
+
+.crumbs { display: flex; align-items: center; gap: 5px; font-size: 12px; flex-wrap: wrap; min-height: 22px; }
+.crumbs button {
+  font: inherit; font-size: 12px; background: none; border: 0; cursor: pointer;
+  color: var(--text-secondary); padding: 2px 5px; border-radius: 5px;
+}
+.crumbs button:hover { background: var(--plane); color: var(--text-primary); }
+.crumbs .sep { color: var(--muted); }
+.crumbs .cur { color: var(--text-primary); font-weight: 600; }
+
+.legend { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.legend .ramp { display: flex; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
+.legend .ramp i { width: 26px; height: 11px; display: block; }
+.legend .keys { display: flex; gap: 12px; flex-wrap: wrap; }
+.legend .key { display: flex; align-items: center; gap: 5px; }
+.legend .key i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+
+/* ── lists ──────────────────────────────────────────────────────────────── */
+.list { display: flex; flex-direction: column; gap: 1px; max-height: 380px; overflow-y: auto; }
+/* Flex, not grid — rows carry a different number of trailing cells per list
+   (pill / checkbox / open-link), and a fixed column count couples them. */
+.row {
+  display: flex; align-items: center;
+  gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+}
+.row:hover { background: var(--plane); }
+.row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .open {
+  flex: none; text-decoration: none; color: var(--muted); font-size: 13px;
+  padding: 3px 7px; border-radius: 6px; border: 1px solid transparent; line-height: 1;
+}
+.row .open:hover { color: var(--text-primary); border-color: var(--border); background: var(--surface-1); }
+.row.pick { cursor: pointer; }
+.row .nm small { display: block; color: var(--muted); font-size: 11px; }
+.row .sz { font-variant-numeric: tabular-nums; font-weight: 550; white-space: nowrap; }
+.row .ag { font-size: 11px; color: var(--text-secondary); white-space: nowrap; text-align: right; }
+.row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--critical); }
+.tablelist { max-height: 460px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 550;
+  padding: 2px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap;
+}
+.pill.good { color: var(--good); }
+.pill.warning { color: #8a5a00; }
+.pill.serious { color: #a4482a; }
+.pill.critical { color: var(--critical); }
+/* warning/serious sit below 3:1 on the light surface, so the pills take a
+   darker same-family ink there; the dark surface uses the status steps as-is.
+   Either way a pill always ships icon + label — a status never rides on
+   colour alone. */
+:root[data-theme="dark"] .viz-root .pill.warning { color: var(--warning); }
+:root[data-theme="dark"] .viz-root .pill.serious { color: var(--serious); }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root .pill.warning { color: var(--warning); }
+  :root:where(:not([data-theme="light"])) .viz-root .pill.serious { color: var(--serious); }
+}
+
+.empty-list { padding: 22px; text-align: center; color: var(--muted); font-size: 12px; }
+
+dialog {
+  border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+  background: var(--surface-1); color: var(--text-primary); max-width: 760px; width: 92vw;
+  box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlgbody { font-size: 13px; margin-bottom: 12px; }
+.dlgbody pre {
+  background: var(--plane); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; overflow-x: auto; font-size: 12px; line-height: 1.6;
+}
+.dlgbody h3 { font-size: 13px; margin: 14px 0 6px; }
+
+.foot { margin-top: 22px; font-size: 11px; color: var(--muted); text-align: center; }
+.foot code { font-size: 11px; }
+</style>

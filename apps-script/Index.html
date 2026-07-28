@@ -1,0 +1,164 @@
+<!--
+  Google Drive Storage Explorer — shell.
+  Every partial below is inlined into ONE document at serve time.
+
+  HOUSE RULE FOR EVERY <script> BLOCK IN THIS PROJECT:
+  no IIFEs. Declare everything with `var` / `function` at top level so the
+  blocks genuinely share one global scope. An IIFE here produces a helper that
+  is invisible to the next block, and the only symptom is a button that
+  silently does nothing.
+-->
+<?!= include('Styles'); ?>
+
+<div class="viz-root" id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <!-- Same artwork as assets/icon.svg and the tab favicon. -->
+      <svg class="logo" viewBox="0 0 512 512" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#a40a1b"/>
+            <stop offset="0.55" stop-color="#d34b49"/>
+            <stop offset="1" stop-color="#eed4d1"/>
+          </linearGradient>
+        </defs>
+        <rect width="512" height="512" rx="114" fill="url(#lg)"/>
+        <g fill="#fff">
+          <rect x="96"  y="96"  width="190" height="180" rx="10" opacity="1"/>
+          <rect x="304" y="96"  width="112" height="180" rx="10" opacity=".84"/>
+          <rect x="96"  y="294" width="190" height="122" rx="10" opacity=".68"/>
+          <rect x="304" y="294" width="112" height="122" rx="10" opacity=".52"/>
+        </g>
+      </svg>
+      <div>
+        <h1>Google Drive <span class="thin">Storage Explorer</span></h1>
+        <p class="sub" id="acct">connecting…</p>
+      </div>
+    </div>
+    <div class="topactions">
+      <label class="field">
+        <span>Scope</span>
+        <select id="scope">
+          <option value="owned">Files I own (counts against quota)</option>
+          <option value="all">Everything I can see</option>
+        </select>
+      </label>
+      <button class="btn primary" id="btnScan">Scan Drive</button>
+      <button class="btn ghost" id="btnTheme" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div class="progress" id="progress" hidden>
+    <div class="bar"><i id="progBar"></i></div>
+    <span id="progText">Scanning…</span>
+  </div>
+
+  <section class="panel quota" id="quotaPanel">
+    <div class="panelhead">
+      <h2>Account storage</h2>
+      <span class="hero" id="quotaHero"></span>
+    </div>
+    <div class="meter" id="quotaMeter"></div>
+    <div class="legend" id="quotaLegend"></div>
+    <p class="hint" id="quotaNote"></p>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="panel mapwrap">
+    <div class="panelhead">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="modes">
+        <div class="seg" role="group" aria-label="Colour by">
+          <button class="on" id="modeSize" data-mode="size">Colour by size</button>
+          <button id="modeAge" data-mode="age">Colour by age</button>
+        </div>
+        <button class="btn ghost sm" id="btnUp">↑ Up</button>
+      </div>
+    </div>
+    <div class="canvasbox">
+      <canvas id="map"></canvas>
+      <div class="tip" id="tip" hidden></div>
+      <div class="empty" id="mapEmpty">Run a scan to map where the storage mass sits.</div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="cols">
+    <div class="panel">
+      <div class="panelhead">
+        <h2>Dead folders <span class="count" id="deadCount"></span></h2>
+        <label class="field inline">
+          <span>Inactive for</span>
+          <select id="deadAfter">
+            <option value="90">3 months</option>
+            <option value="180">6 months</option>
+            <option value="365" selected>1 year</option>
+            <option value="730">2 years</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">Folders whose every file is past the threshold. Safe to move to the NAS and clear.</p>
+      <div class="list" id="deadList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelhead">
+        <h2>Migration classes</h2>
+      </div>
+      <p class="hint">
+        Google-native files use <b>~0 storage quota</b> — deleting them frees nothing.
+        They are an <i>export</i> job, not a space job.
+      </p>
+      <div class="list" id="classList"></div>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div class="panel">
+      <div class="panelhead">
+        <h2>Storage by file type</h2>
+      </div>
+      <p class="hint">What the mass is actually made of, across the scanned scope.</p>
+      <div class="list" id="typeList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelhead">
+        <h2>Shared drives <span class="count" id="driveCount"></span></h2>
+        <button class="btn ghost sm" id="btnMeasure">Measure all</button>
+      </div>
+      <p class="hint">
+        Shared-drive content bills to the drive's own pool, <b>not</b> your personal
+        quota — so these totals are separate and never added to the figures above.
+      </p>
+      <div class="list" id="driveList"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panelhead">
+      <h2>Reclaimable — biggest dead binaries</h2>
+      <div class="modes">
+        <button class="btn ghost sm" id="btnCsv">Export manifest CSV</button>
+        <button class="btn ghost sm" id="btnRclone">Show rclone commands</button>
+        <button class="btn danger sm" id="btnTrash" disabled>Move selected to Drive trash</button>
+      </div>
+    </div>
+    <div id="gateNote" class="note"></div>
+    <div class="list tablelist" id="bigList"></div>
+  </section>
+
+  <dialog id="dlg"><div class="dlgbody" id="dlgBody"></div>
+    <form method="dialog"><button class="btn ghost">Close</button></form>
+  </dialog>
+
+  <footer class="foot">
+    Created by UWC Immersive Zone · storage figures come from Drive
+    <code>quotaBytesUsed</code>, the same number Google bills the account on.
+  </footer>
+</div>
+
+<?!= include('Treemap'); ?>
+<?!= include('Dashboard'); ?>
