@@ -117,6 +117,7 @@ function dsScanStep(opts, seen) {
           id: t[0], parent: t[1], name: t[2], kind: t[3],
           self: t[4], bytes: t[4], days: t[5],
           mime: DS_MIMES[remap[t[6]]] || '',
+          md5: t[7] || '',
           children: [], fileCount: 0, minDays: t[5] < 0 ? 1e9 : t[5]
         };
         DS_ALL.push(n);
@@ -686,7 +687,8 @@ function dsExportCsv() {
     } else if (n.days >= DS_DEAD_DAYS) { cls = 'binary-dead'; action = 'move-to-nas-then-trash'; }
     else { cls = 'binary-active'; action = 'keep'; }
     rows.push({ id: n.id, name: n.name, path: dsPath(n), cls: cls, mime: n.mime,
-                bytes: n.bytes, days: n.days, action: action, exportAs: exp });
+                bytes: n.bytes, days: n.days, action: action, exportAs: exp,
+                md5: n.md5 || '' });
   });
 
   google.script.run.withSuccessHandler(function (csv) {

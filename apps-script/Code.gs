@@ -140,7 +140,7 @@ function getBootstrap() {
  * One chunk of the inventory. Client calls repeatedly until done=true.
  *
  * Returns compact tuples to keep the google.script.run payload small:
- *   [ id, parentId, name, kind, bytes, actDays, mimeIdx ]
+ *   [ id, parentId, name, kind, bytes, actDays, mimeIdx, md5 ]
  * `mimes` is a per-chunk dictionary the client remaps into its own table.
  *
  * @param {Object} opts {pageToken, scope:'owned'|'all', driveId, includeTrashed}
@@ -161,8 +161,11 @@ function scanChunk(opts) {
   var params = {
     q: q.join(' and '),
     pageSize: PAGE_SIZE,
+    // md5Checksum is returned by the API at no cost and without downloading the
+// file. It is the only way to prove two files are byte-identical without
+// reading their contents, which is what the NAS de-duplication needs.
     fields: 'nextPageToken,files(id,name,mimeType,size,quotaBytesUsed,parents,' +
-            'modifiedTime,viewedByMeTime,createdTime,shortcutDetails(targetId))',
+            'modifiedTime,viewedByMeTime,createdTime,md5Checksum,shortcutDetails(targetId))',
     orderBy: 'folder,quotaBytesUsed desc'
   };
   if (opts.driveId) {
@@ -202,7 +205,8 @@ function scanChunk(opts) {
         kind,
         bytes,
         activityDays_(f, started),
-        mimeIx[mime]
+        mimeIx[mime],
+        f.md5Checksum || ''
       ]);
     }
     token = res.nextPageToken || null;
@@ -413,7 +417,7 @@ function trashFiles(ids) {
 /** Rows the QNAP agent (or a human running rclone) can act on directly. */
 function buildManifestCsv(rows) {
   var head = ['drive_id', 'name', 'path', 'class', 'mime', 'bytes',
-              'days_inactive', 'action', 'export_as'];
+              'days_inactive', 'action', 'export_as', 'md5'];
   var esc = function (v) {
     v = v === null || v === undefined ? '' : String(v);
     return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
@@ -421,7 +425,7 @@ function buildManifestCsv(rows) {
   var out = [head.join(',')];
   (rows || []).forEach(function (r) {
     out.push([r.id, r.name, r.path, r.cls, r.mime, r.bytes,
-              r.days, r.action, r.exportAs || ''].map(esc).join(','));
+              r.days, r.action, r.exportAs || '', r.md5 || ''].map(esc).join(','));
   });
   return out.join('\n');
 }
