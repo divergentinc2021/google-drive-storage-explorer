@@ -27,7 +27,7 @@ var EXPORTABLE = {
 
 // ── boot ────────────────────────────────────────────────────────────────────
 function dsInit() {
-  tmInit('map', 'tip', dsZoomTo, dsOpenInDrive);
+  tmInit('map', 'tip', dsZoomTo, dsOpenInDrive, dsDescribe);
 
   document.getElementById('btnScan').addEventListener('click', dsScan);
   document.getElementById('btnTheme').addEventListener('click', dsToggleTheme);
@@ -262,6 +262,69 @@ function dsOpenInDrive(node) {
       '<p><a href="' + dsEsc(url) + '" target="_blank" rel="noopener">' +
       dsEsc(node.name || 'Open in Drive') + ' ↗</a></p>');
   }
+}
+
+// ── hover detail ────────────────────────────────────────────────────────────
+/**
+ * What the treemap cannot know on its own: where a node lives, which migration
+ * class it falls into, and therefore what to do with it.
+ *
+ * This is the other half of keeping on-map labels terse. The tile shows a
+ * shortened name and a size; everything that needs room — the full path, the
+ * class, the recommended action — surfaces here on hover instead of competing
+ * for pixels with the data.
+ *
+ * @return {{path: string, rows: Array, verdict: string}}
+ */
+function dsDescribe(n) {
+  if (!n || n.id === '__root__') return { rows: [] };
+  var out = { path: '', rows: [], verdict: '' };
+
+  var parent = DS_BYID[n.parent];
+  if (n.synthetic) out.path = parent ? dsPath(parent) : '';
+  else out.path = dsPath(n);
+
+  if (n.kind === KIND_FOLDER) {
+    var dead = n.fileCount > 0 && n.minDays >= DS_DEAD_DAYS;
+    out.rows.push(['Oldest file', tmFmtDays(n.minDays === 1e9 ? -1 : n.minDays)]);
+    out.verdict = dead
+      ? '⇠ Every file idle past ' + dsDaysLabel(DS_DEAD_DAYS) + ' — safe to move to the NAS'
+      : '✓ Has activity inside ' + dsDaysLabel(DS_DEAD_DAYS) + ' — leave in Drive';
+    return out;
+  }
+
+  if (n.synthetic) {
+    out.rows.push(['Rolled up', n.fileCount.toLocaleString() + ' files under ' +
+                   tmFmtBytes(DS_SMALL_FLOOR)]);
+    out.verdict = 'Folded together so the map stays readable — zoom the folder to itemise';
+    return out;
+  }
+
+  if (n.kind === KIND_SHORTCUT) {
+    out.verdict = '↗ Shortcut — a pointer, zero storage. Ignore.';
+    return out;
+  }
+
+  if (n.kind === KIND_NATIVE) {
+    var as = dsExportAs(n.mime);
+    out.rows.push(['Quota used', '~0 — Google-native']);
+    out.verdict = as
+      ? '⤓ Exports as .' + as + '. Copy for backup; deleting frees nothing.'
+      : '⚑ No export path (Form, Site, My Map). Must stay in Drive.';
+    return out;
+  }
+
+  // Binary: the only class where moving it actually reclaims quota.
+  if (n.days >= DS_DEAD_DAYS) {
+    out.rows.push(['Class', 'Dead binary']);
+    out.verdict = '⨯ Idle past ' + dsDaysLabel(DS_DEAD_DAYS) +
+                  ' — move to the NAS, then trash. Reclaims ' + tmFmtBytes(n.bytes) + '.';
+  } else {
+    out.rows.push(['Class', 'Active binary']);
+    out.verdict = '✓ Touched recently — leave in Drive.';
+  }
+  if (n.md5) out.rows.push(['md5', n.md5.slice(0, 10) + '…']);
+  return out;
 }
 
 // ── zoom ────────────────────────────────────────────────────────────────────

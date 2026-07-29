@@ -5,10 +5,18 @@
   The two data ramps below were DERIVED AND VALIDATED, not hand-picked
   (tools/make_ramp.mjs + the dataviz validator). Do not "tidy" them by eye.
 
-  SIZE = sequential, MULTI-HUE (a black-body path), monotone L.
-    Light mode runs near-white neutral → gold → orange → deep red; dark mode
-    runs the same path the other way, near-black → maroon → orange → bright
-    yellow, so the biggest is always the most prominent against its surface.
+  SIZE = sequential, MULTI-HUE, monotone L.
+    Light mode runs near-white neutral → gold → orange → red → deep purple-red;
+    dark mode runs the same path the other way, purple-black → maroon → flame →
+    bright yellow, so the biggest is always the most prominent against its
+    surface. That inverts which end the purple sits on between the two themes —
+    inherent, since on a dark plane the largest thing must be the brightest.
+
+    The hue path is expressed with NEGATIVE angles (104° → −24°) to keep it on
+    the warm arc. Writing −24° as +336° makes the interpolation walk the long way
+    round through green, cyan and blue; that was measured and scores BETTER on
+    adjacent separation (.1141 vs .1027) purely because it stops being ordered.
+    Adjacent separation only means anything while the ramp is still sequential.
 
     Hue was added because the map is now shaded: relief + ambient occlusion
     swing lightness WITHIN one tile by a median of 2.44 adjacent ramp steps, so
@@ -22,19 +30,26 @@
     unfixed contrast failure — the 2:1 floor applies to *ordinal* ramps.
 
   AGE = ordinal. The bands are ORDERED, so the ramp must be rankable by eye.
-    It now walks mint -> turquoise -> teal -> blue -> navy: hue rotates 175->255
+    It walks green -> turquoise -> teal -> blue -> navy: hue rotates 150->255
     monotonically WHILE lightness falls monotonically. Multi-hue bought real
     discriminability over the old single blue — minimum adjacent OKLab distance
-    .098 -> .1425 in light mode (+45%) and .1005 -> .1170 in dark (+16%), with
-    both CVD simulations improving too.
+    .098 -> .142 in light mode (+45%) and .1005 -> .1243 in dark, with all three
+    CVD simulations improving too.
 
-    What was rejected: the same colours as a PALETTE — turquoise, green, sky
-    blue and navy at co-equal lightness. It scores a higher mean distance, and
-    it is still wrong, because an ordered variable rendered as unordered hues
-    cannot be ranked without the legend ("is turquoise more or less idle than
-    sky blue?"). It also failed lightness-monotonicity under both deuteranopia
-    and protanopia, so two bands collapse for ~8% of men. Monotone L is the
-    constraint that lets a multi-hue ramp degrade to a usable greyscale one;
+    The recent end is a LIGHT green, and that is a constraint rather than a
+    preference. A DARK green for "most recent" was asked for and measured: it
+    cannot work sequentially, because the oldest band already owns the dark end,
+    so darkening the newest puts both extremes at one lightness. Built properly
+    as a diverging ramp (dark green → pale middle → dark navy) adjacent
+    separation rises to .2212 — but the two ENDS fall to .1911 apart against
+    .5731 here, and .0619 under tritanopia. Those ends are "leave alone" and
+    "move to the NAS": the two opposite actions, and the pair you can least
+    afford to confuse while scanning hundreds of tiles.
+
+    Also rejected: these colours as a PALETTE at co-equal lightness. Higher mean
+    distance, still wrong — unordered hues cannot be ranked without the legend,
+    and it failed lightness-monotonicity under both deuteranopia and protanopia.
+    Monotone L is what lets a multi-hue ramp degrade to a usable greyscale one;
     give it up and the ramp stops being a ramp.
 
   TILE INK is NOT a token per theme. A treemap tile's background is whatever
@@ -61,10 +76,10 @@
   --serious: #ec835a;
   --critical: #d03b3b;
 
-  --size-0: #f5f5f2; --size-1: #edd9a1; --size-2: #ecb65b; --size-3: #e49124;
-  --size-4: #d46e00; --size-5: #c14b00; --size-6: #ae1900; --size-7: #8a0020;
+  --size-0: #f5f5f2; --size-1: #eed59f; --size-2: #f0aa5c; --size-3: #e77e40;
+  --size-4: #d45441; --size-5: #b9284b; --size-6: #910056; --size-7: #630055;
 
-  --age-0: #a3e8d5; --age-1: #48bfbf; --age-2: #0090a8; --age-3: #006086; --age-4: #003167;
+  --age-0: #9ce6ab; --age-1: #42bea4; --age-2: #008e97; --age-3: #005f7e; --age-4: #003167;
 
   /* Brand / chrome. NOT the data ramp — buttons, the progress bar and the quota
      meter used to borrow --size-4/5/6 directly, which meant the treemap's
@@ -91,10 +106,10 @@
     --border: rgba(255, 255, 255, .10);
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-    --size-0: #2a2222; --size-1: #522d27; --size-2: #793a23; --size-3: #9f4a00;
-    --size-4: #b76700; --size-5: #cd8500; --size-6: #e1a400; --size-7: #f1c623;
+    --size-0: #201a1e; --size-1: #462534; --size-2: #722f3d; --size-3: #9f3b35;
+    --size-4: #c6500d; --size-5: #d87900; --size-6: #e7a000; --size-7: #f0c927;
 
-    --age-0: #adeedb; --age-1: #62cfce; --age-2: #1daac4; --age-3: #0081b4; --age-4: #255896;
+    --age-0: #abf2b9; --age-1: #5fd0b7; --age-2: #00a9b4; --age-3: #007ea5; --age-4: #1f5390;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
@@ -114,10 +129,10 @@
   --border: rgba(255, 255, 255, .10);
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-  --size-0: #2a2222; --size-1: #522d27; --size-2: #793a23; --size-3: #9f4a00;
-  --size-4: #b76700; --size-5: #cd8500; --size-6: #e1a400; --size-7: #f1c623;
+  --size-0: #201a1e; --size-1: #462534; --size-2: #722f3d; --size-3: #9f3b35;
+  --size-4: #c6500d; --size-5: #d87900; --size-6: #e7a000; --size-7: #f0c927;
 
-  --age-0: #adeedb; --age-1: #62cfce; --age-2: #1daac4; --age-3: #0081b4; --age-4: #255896;
+  --age-0: #abf2b9; --age-1: #5fd0b7; --age-2: #00a9b4; --age-3: #007ea5; --age-4: #1f5390;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
@@ -245,11 +260,24 @@ select {
 #map { width: 100%; height: 100%; display: block; cursor: pointer; }
 .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .tip {
-  position: absolute; pointer-events: none; z-index: 5; max-width: 300px;
+  position: absolute; pointer-events: none; z-index: 5; max-width: 340px;
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
   padding: 9px 11px; font-size: 12px; box-shadow: var(--shadow); line-height: 1.45;
 }
-.tip .t { font-weight: 640; margin-bottom: 3px; word-break: break-word; }
+.tip .t { font-weight: 640; margin-bottom: 1px; word-break: break-word; }
+/* Full path, unabbreviated — the on-map label is elided, so this is where you
+   find out which of four "Exports" folders you are actually hovering. */
+.tip .p {
+  font-size: 11px; color: var(--muted); word-break: break-word;
+  margin-bottom: 6px; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+}
+/* The recommended action. It is the point of the whole tool, so it gets its own
+   block rather than being one more label/value row to scan past. */
+.tip .v {
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+  color: var(--text-primary); font-weight: 550;
+}
+.tip .h { margin-top: 5px; font-size: 10px; color: var(--muted); }
 .tip .r { color: var(--text-secondary); display: flex; justify-content: space-between; gap: 14px; }
 .tip .r b { color: var(--text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
 

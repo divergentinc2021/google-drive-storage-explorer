@@ -93,17 +93,27 @@ const ramp = (L0, L1, H0, H1, Cs) =>
     return oklchToHex(gamutFit({ L: lerp(L0, L1, t), C, H: lerp(H0, H1, t) }));
   });
 
-// Light: near-white neutral -> gold -> orange -> deep red. Step 0 sits 0.0123
-// from the surface, so negligible files still recede -- that is the documented
-// sequential exemption, and the multi-hue version tightened it rather than
-// losing it.
-const light = ramp(0.970, 0.400, 102, 20,
+/*
+  NEGATIVE HUE ANGLES ARE DELIBERATE. The path has to stay on the warm arc:
+  104 -> 0 -> -24 is gold -> orange -> red -> purple-red. Writing the same
+  endpoint as +336 instead makes the interpolation walk the long way round the
+  wheel, through green, cyan and blue. That was tried: it scores BETTER on
+  adjacent separation (.1141 vs .1027) precisely because it abandons any ordered
+  reading -- it is the jet-colormap trap. Adjacent separation is only meaningful
+  while the ramp is still sequential, so never read that number on its own.
+*/
+
+// Light: near-white neutral -> gold -> orange -> red -> deep purple-red. Step 0
+// sits 0.0123 from the surface, so negligible files still recede -- that is the
+// documented sequential exemption, not a contrast bug.
+const light = ramp(0.970, 0.340, 104, -24,
   [0.004, 0.075, 0.125, 0.150, 0.165, 0.180, 0.195, 0.180]);
 
-// Dark: the same path run the other way -- near-black just above the surface,
-// climbing through maroon and orange to a bright yellow. Brightest is biggest,
-// the direction the dark ramp already used; only the hue path is new.
-const dark = ramp(0.260, 0.840, 20, 92,
+// Dark: the same path run the other way -- a purple-black floor climbing through
+// maroon and flame to a bright yellow. Brightest is biggest, because on a dark
+// plane the largest thing has to be the most prominent one; that inverts where
+// the purple sits relative to light mode, which is inherent and not a mistake.
+const dark = ramp(0.225, 0.845, -24, 94,
   [0.012, 0.055, 0.095, 0.135, 0.165, 0.180, 0.175, 0.165]);
 
 const show = (name, arr) => {
@@ -125,10 +135,22 @@ show('SIZE ramp / dark', dark);
   measured and rejected: higher mean separation, but not L-monotone under either
   deuteranopia or protanopia, and not rankable without consulting the legend.
 */
-const ageStops = (Ls, Cs) => Ls.map((L, i) => oklchToHex(gamutFit({ L, C: Cs[i], H: AGE_H[i] })));
-const AGE_H = [175, 195, 215, 235, 255];
-show('AGE ramp / light', ageStops([0.88, 0.74, 0.60, 0.46, 0.32], [0.075, 0.105, 0.120, 0.130, 0.110]));
-show('AGE ramp / dark',  ageStops([0.90, 0.79, 0.68, 0.57, 0.46], [0.070, 0.100, 0.115, 0.125, 0.115]));
+/*
+  The recent end is GREEN, not mint: hue starts at 150 instead of 175. It is a
+  LIGHT green, and that constraint is the whole story.
+
+  A dark green for "most recent" was asked for and measured. It cannot work in a
+  sequential ramp, because the oldest band is already the dark end -- making the
+  newest dark too puts both extremes at the same lightness and the ramp stops
+  being rankable. The legitimate form is a DIVERGING ramp (dark green -> pale
+  middle -> dark navy), and that was built and tested: adjacent separation jumps
+  to .2212, but the two ENDS land only .1911 apart against .5731 for this ramp,
+  and .0619 apart under tritanopia. Those two ends are "leave it alone" and "move
+  it to the NAS" -- the two opposite actions on the map, and the pair you would
+  most easily confuse. Not a trade worth making, so: green, but light.
+*/
+show('AGE ramp / light', ramp(0.86, 0.32, 150, 255, [0.110, 0.115, 0.115, 0.120, 0.110]));
+show('AGE ramp / dark',  ramp(0.90, 0.44, 150, 255, [0.105, 0.110, 0.115, 0.120, 0.115]));
 
 // Minimum adjacent separation is the number that matters — a ramp is only as
 // readable as its closest neighbouring pair, since that is the comparison two

@@ -27,6 +27,7 @@ var TM_RAMP_SIZE = [], TM_RAMP_AGE = [];
 var TM_LOGMIN = 0, TM_LOGMAX = 1;  // log-range of the tiles on screen
 var TM_ONZOOM = null;        // set by Dashboard
 var TM_ONOPEN = null;        // set by Dashboard — double-click opens in Drive
+var TM_ONDESCRIBE = null;    // set by Dashboard — supplies path / class / verdict
 var TM_HOVER = null;
 var TM_CLICK_TIMER = null;   // single-click zoom, cancelled by a double-click
 var TM_RESIZE_TIMER = null;  // resize coalescing — see tmInit
@@ -72,6 +73,30 @@ function tmAt(arr, depth) { return arr[depth < arr.length ? depth : arr.length -
 var TM_LABEL_W = 72, TM_LABEL_H = 28;         // terminal: name
 var TM_LABEL_SZ_W = 100, TM_LABEL_SZ_H = 40;  // terminal: name + size
 var TM_HEAD_MIN_W = 104;                     // container: header strip + title
+var TM_LABEL_PX_MIN = 11, TM_LABEL_PX_MAX = 16;
+var TM_HALO_FLOOR = 7;       // contrast above which the halo is dropped
+
+/* On-map labels are deliberately terse and elide early, well before they would
+   reach the edge of a wide tile. The full name, the path and the migration
+   verdict all live in the hover tooltip, so the map's job is to be scannable
+   rather than complete — letting a 40-character asset name run the width of a
+   tile is what made the map read as text with colour behind it. */
+var TM_LABEL_MAX_W = 148;    // terminal tiles
+var TM_HEAD_MAX_W = 210;     // container title strips
+
+/**
+ * Type size scales with the tile.
+ *
+ * Every terminal label used to be 11px whether its tile was 72px across or
+ * 300 — so the text carried no hierarchy, and the tiles that matter most read
+ * exactly like the ones that do not. Driven by sqrt(area), not the short side,
+ * so a long thin sliver does not get headline type merely for being wide.
+ */
+function tmLabelPx(w, h) {
+  var t = (Math.sqrt(w * h) - 50) / 200;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return Math.round(TM_LABEL_PX_MIN + (TM_LABEL_PX_MAX - TM_LABEL_PX_MIN) * t);
+}
 
 /** Age bands. Ordered, so the ramp is ordinal (one hue), never categorical. */
 var TM_AGE_BANDS = [
@@ -540,18 +565,67 @@ function tmFitText(text, maxW) {
   return lo > 0 ? text.slice(0, lo) + '…' : '';
 }
 
-function tmLabel(text, x, y, maxW, pair, alpha) {
-  text = tmFitText(text, maxW);
+/**
+ * Same, but keep a file extension when there is one.
+ *
+ * Tail truncation threw away the one part of a filename that carries meaning
+ * here: `cam_a_4499.mp4` became `cam_a_4…`, so a tile told you nothing about
+ * what kind of thing it was — and file type is exactly what this tool is for
+ * triaging (a 4 GB mp4 and a 4 GB zip are different decisions). Eliding the
+ * middle keeps the extension.
+ */
+function tmFitLabel(text, maxW, keepExt) {
+  text = String(text);
+  if (maxW <= 4) return '';
+  if (TM_CTX.measureText(text).width <= maxW) return text;
+  if (keepExt) {
+    var m = /^(.+)(\.[A-Za-z0-9]{1,6})$/.exec(text);
+    if (m && m[1].length > 2) {
+      var head = m[1], ext = m[2];
+      var lo = 0, hi = head.length;
+      while (lo < hi) {
+        var mid = (lo + hi + 1) >> 1;
+        if (TM_CTX.measureText(head.slice(0, mid) + '…' + ext).width <= maxW) lo = mid; else hi = mid - 1;
+      }
+      // Below a couple of leading characters the elision says less than a
+      // plain tail cut would, so fall through rather than emit "c….mp4".
+      if (lo > 2) return head.slice(0, lo) + '…' + ext;
+    }
+  }
+  return tmFitText(text, maxW);
+}
+
+function tmLabel(text, x, y, maxW, pair, alpha, halo, keepExt) {
+  text = tmFitLabel(text, maxW, keepExt);
   if (!text) return;
-  TM_CTX.globalAlpha = alpha * 0.72;
-  TM_CTX.strokeStyle = pair[1];
-  TM_CTX.lineWidth = 2;
-  TM_CTX.lineJoin = 'round';
-  TM_CTX.miterLimit = 2;
-  TM_CTX.strokeText(text, x, y);
+  if (halo) {
+    TM_CTX.globalAlpha = alpha * 0.72;
+    TM_CTX.strokeStyle = pair[1];
+    TM_CTX.lineWidth = 2;
+    TM_CTX.lineJoin = 'round';
+    TM_CTX.miterLimit = 2;
+    TM_CTX.strokeText(text, x, y);
+  }
   TM_CTX.globalAlpha = alpha;
   TM_CTX.fillStyle = pair[0];
   TM_CTX.fillText(text, x, y);
+}
+
+/**
+ * A halo is insurance, not decoration — it costs sharpness, because a 2px stroke
+ * under 11px glyphs thickens every stem. It earns that cost only where the
+ * background is unpredictable.
+ *
+ * A container title has a wide flat neutral strip sized to fit it, so haloing it
+ * merely blurs text that already sits at ~18:1. A tile face never qualifies,
+ * even unshaded and even when the sampled anchor reads high: the label runs close
+ * to the tile's own edges, so the glyph band can pick up the edge stroke and the
+ * gutter beyond it. Dropping the halo on tile faces was tried and measured a
+ * label at 4.28:1 in flat dark mode — below AA — which is exactly that overlap.
+ */
+function tmNeedsHalo(r, bgLum, ink) {
+  if (r.terminal) return true;
+  return tmContrast(bgLum, ink === TM_INK_LIGHT ? TM_LUM_LIGHT : TM_LUM_DARK) < TM_HALO_FLOOR;
 }
 
 function tmDrawLabels() {
@@ -562,17 +636,28 @@ function tmDrawLabels() {
       if (r.w < TM_LABEL_W || r.h < TM_LABEL_H) continue;
     } else if (!r.head) continue;
 
+    // Shallow clusters take a larger, heavier title; terminal tiles scale with
+    // their own area. Type size is the cheapest way to make the hierarchy
+    // legible before a single word has been read.
+    var px = r.terminal ? tmLabelPx(r.w, r.h)
+                        : (r.depth === 1 ? 13 : r.depth === 2 ? 12 : 11);
+    var szPx = r.terminal ? Math.max(10, px - 2) : px;
+    var szTop = r.y + 3 + px + 2;
+
     // A container only ever labels its header strip. Its size line used to be
-    // drawn at +17px, which on a folder lands on top of its own children.
-    var strip = r.terminal ? Math.min(r.h - 2, 30) : Math.min(r.h - 2, r.head);
+    // drawn at a fixed +17px, which on a folder lands on top of its children.
+    var twoLine = r.terminal && r.w >= TM_LABEL_SZ_W &&
+                  r.h >= Math.max(TM_LABEL_SZ_H, 3 + px + 2 + szPx + 4);
+    var strip = r.terminal
+      ? Math.min(r.h - 2, twoLine ? 3 + px + 2 + szPx + 2 : 3 + px + 2)
+      : Math.min(r.h - 2, r.head);
     if (strip < 12) continue;
 
-    // Shallow clusters take a larger, heavier title. The size step is the
-    // cheapest way to make the hierarchy legible before anything is read.
-    var px = r.terminal ? 11 : (r.depth === 1 ? 13 : r.depth === 2 ? 12 : 11);
     var yTop = r.terminal ? r.y + 3 : r.y + Math.max(1, (r.head - px) / 2);
     var textW = Math.min(r.w - 10, 220);
-    var pair = tmInkPair(tmBgLum(r, r.x + 5, yTop, textW, px));
+    var bg = tmBgLum(r, r.x + 5, yTop, textW, px);
+    var pair = tmInkPair(bg);
+    var halo = tmNeedsHalo(r, bg, pair[0]);
 
     TM_CTX.save();
     TM_CTX.beginPath();
@@ -581,12 +666,17 @@ function tmDrawLabels() {
     TM_CTX.textBaseline = 'top';
     TM_CTX.font = (r.terminal ? '' : '650 ') + px + 'px system-ui, -apple-system, sans-serif';
 
+    var nameW = Math.min(r.w - 10, r.terminal ? TM_LABEL_MAX_W : TM_HEAD_MAX_W);
+
     if (r.terminal) {
-      tmLabel(n.name, r.x + 5, r.y + 3, r.w - 10, pair, 1);
-      if (r.h >= TM_LABEL_SZ_H && r.w >= TM_LABEL_SZ_W) {
-        var szPair = tmInkPair(tmBgLum(r, r.x + 5, r.y + 17, textW, 10));
-        TM_CTX.font = '10px system-ui, -apple-system, sans-serif';
-        tmLabel(tmFmtBytes(n.bytes), r.x + 5, r.y + 17, r.w - 10, szPair, 0.88);
+      // keepExt only for files — a folder has no extension to preserve.
+      tmLabel(n.name, r.x + 5, yTop, nameW, pair, 1, halo, n.kind !== 0);
+      if (twoLine) {
+        var szBg = tmBgLum(r, r.x + 5, szTop, textW, szPx);
+        var szPair = tmInkPair(szBg);
+        TM_CTX.font = szPx + 'px system-ui, -apple-system, sans-serif';
+        tmLabel(tmFmtBytes(n.bytes), r.x + 5, szTop, r.w - 10, szPair, 0.88,
+                tmNeedsHalo(r, szBg, szPair[0]), false);
       }
     } else {
       // Folder header: name left, total right — the aggregate is the whole
@@ -594,10 +684,11 @@ function tmDrawLabels() {
       var sz = tmFmtBytes(n.bytes);
       var szW = TM_CTX.measureText(sz).width + 12;
       var room = r.w > 150 && szW < r.w * 0.45;
-      tmLabel(n.name, r.x + 5, yTop, r.w - 10 - (room ? szW : 0), pair, 1);
+      tmLabel(n.name, r.x + 5, yTop,
+              Math.min(nameW, r.w - 10 - (room ? szW : 0)), pair, 1, halo, false);
       if (room) {
         TM_CTX.textAlign = 'right';
-        tmLabel(sz, r.x + r.w - 5, yTop, szW, pair, 0.82);
+        tmLabel(sz, r.x + r.w - 5, yTop, szW, pair, 0.82, halo, false);
         TM_CTX.textAlign = 'left';
       }
     }
@@ -763,9 +854,25 @@ function tmOnMove(ev) {
   if (n.kind === 0) rows.push(['Contains', (n.fileCount || 0).toLocaleString() + ' files']);
   else if (n.mime) rows.push(['Type', tmShortMime(n.mime)]);
 
-  TM_TIP.innerHTML = '<div class="t"></div>' + rows.map(function (r) {
-    return '<div class="r"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>';
+  /* Anything that needs to know what a Drive file MEANS — its path, its
+     migration class, what to do with it — comes from Dashboard through this
+     callback, the same way zooming and opening do. The treemap stays a
+     renderer; it has no business knowing what a native stub is. */
+  var extra = TM_ONDESCRIBE ? (TM_ONDESCRIBE(n) || []) : [];
+
+  var esc = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  };
+  var html = '<div class="t"></div>';
+  if (extra.path) html += '<div class="p">' + esc(extra.path) + '</div>';
+  html += rows.concat(extra.rows || []).map(function (r) {
+    return '<div class="r"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>';
   }).join('');
+  if (extra.verdict) html += '<div class="v">' + esc(extra.verdict) + '</div>';
+  html += '<div class="h">double-click to open in Drive</div>';
+
+  TM_TIP.innerHTML = html;
   TM_TIP.querySelector('.t').textContent = n.name;
 
   TM_TIP.hidden = false;
@@ -824,12 +931,13 @@ function tmSetRoot(node) { TM_ROOT = node; TM_HOVER = null; tmDraw(); }
 function tmSetMode(mode) { TM_MODE = mode; tmDraw(); }
 function tmSetRelief(on) { TM_RELIEF = !!on; if (TM_ROOT) tmDraw(); }
 
-function tmInit(canvasId, tipId, onZoom, onOpen) {
+function tmInit(canvasId, tipId, onZoom, onOpen, onDescribe) {
   TM_CANVAS = document.getElementById(canvasId);
   TM_CTX = TM_CANVAS.getContext('2d');
   TM_TIP = document.getElementById(tipId);
   TM_ONZOOM = onZoom;
   TM_ONOPEN = onOpen;
+  TM_ONDESCRIBE = onDescribe || null;
   TM_CANVAS.addEventListener('mousemove', tmOnMove);
   TM_CANVAS.addEventListener('mouseleave', tmOnLeave);
   TM_CANVAS.addEventListener('click', tmOnClick);
