@@ -44,23 +44,46 @@ var mkSeed = 20260728;
 function mkRnd() { mkSeed = (mkSeed * 1103515245 + 12345) % 2147483648; return mkSeed / 2147483648; }
 function mkPick(a) { return a[Math.floor(mkRnd() * a.length)]; }
 
+/*
+  FOUR folder levels, because the real Drive has four and the map behaves
+  differently at depth. This mock used to be group > project > files, and a
+  three-level tree is exactly why the all-one-red bug reached production: the
+  colour scale was measured over file leaves, and on a real drive the tiles on
+  screen at root are FOLDERS, not files. Keep this at least as deep as
+  studiouih's actual layout or the preview stops being evidence.
+*/
 function mkBuild() {
-  var top = ['Video Projects','Photogrammetry','Archive 2019','Archive 2021','Unity Builds',
-             'Marketing','Admin','Student Work','Raw Footage','Renders'];
-  var sub = ['Iziko','Constantia','Amanzi','RIM','Dental VR','Open Day','Exports','Proxies',
-             'Source','Deliverables','Old','Scratch'];
+  var groups = ['External Client Projects', 'Internal UWC Projects'];
+  var clients = {
+    'External Client Projects': ['Robben Island Museum', 'Amanzi', 'Mayibuye', 'Iziko'],
+    'Internal UWC Projects': ['Preclinical Dental Education VR & Haptics',
+                              'Loggerhead Turtle Project', 'Open Day', 'Archive 2019']
+  };
+  var sub = ['EXPERIENCE RECORDINGS','CONTENT_CREATION','360 Images','3D Models','Project Builds',
+             'Concept','Project Audio','Dentistry Assets','Generated Content','Touch Patches',
+             'Touch Media','ARCHIVE SOURCING','Unity','Proxies','Exports','Scratch'];
   var idn = 0;
   function id() { return 'id' + (++idn) + 'xxxxxxxxxxxxxxxxxxxxxxxxx'; }
 
-  top.forEach(function (t, ti) {
+  groups.forEach(function (g) {
+    var gid = id();
+    MK_ITEMS.push([gid, '', g, 0, 0, -1, 0]);
+    clients[g].forEach(function (t) {
     var tid = id();
-    MK_ITEMS.push([tid, '', t, 0, 0, -1, 0]);
+    MK_ITEMS.push([tid, gid, t, 0, 0, -1, 0]);
     var nsub = 2 + Math.floor(mkRnd() * 4);
     for (var s = 0; s < nsub; s++) {
       var sid = id();
       MK_ITEMS.push([sid, tid, mkPick(sub) + ' ' + (2018 + Math.floor(mkRnd() * 8)), 0, 0, -1, 0]);
       // ageing: the "Archive" trees skew very old
-      var oldish = t.indexOf('Archive') === 0 || t === 'Raw Footage';
+      var oldish = t.indexOf('Archive') === 0 || t === 'Mayibuye';
+      // Some project folders carry one more level, as the real drive does.
+      var bins = [sid], nDeep = mkRnd() < .45 ? 1 + Math.floor(mkRnd() * 2) : 0;
+      for (var d = 0; d < nDeep; d++) {
+        var did = id();
+        MK_ITEMS.push([did, sid, mkPick(['Take','Cam','Scan','Set']) + ' ' + (1 + d), 0, 0, -1, 0]);
+        bins.push(did);
+      }
       var nf = 3 + Math.floor(mkRnd() * 14);
       for (var f = 0; f < nf; f++) {
         var r = mkRnd();
@@ -83,9 +106,10 @@ function mkBuild() {
         var nm = (mimeIdx >= 7 ? mkPick(['Budget','Notes','Plan','Report','Deck','Sign-up'])
                                : mkPick(['take','shot','scan','render','master','proxy','cam_a','drone']))
                  + '_' + (1000 + Math.floor(mkRnd() * 8999)) + (mimeIdx < 7 ? ext : '');
-        MK_ITEMS.push([id(), sid, nm, kind, Math.round(bytes), days, mimeIdx]);
+        MK_ITEMS.push([id(), mkPick(bins), nm, kind, Math.round(bytes), days, mimeIdx]);
       }
     }
+    });
   });
 }
 mkBuild();
@@ -175,9 +199,20 @@ if (out === body) {
   process.exit(1);
 }
 
+// Render the map on load. A preview you have to click to populate is a preview
+// half of whose reviewers never see the thing under review. #empty opts out.
+const AUTOSCAN = `
+<script>
+var PV_TIMER = setInterval(function () {
+  if (typeof DS_BOOT === 'undefined' || !DS_BOOT) return;
+  clearInterval(PV_TIMER);
+  if (location.hash !== '#empty') document.getElementById('btnScan').click();
+}, 40);
+</script>`;
+
 mkdirSync(join(ROOT, 'preview'), { recursive: true });
 writeFileSync(join(ROOT, 'preview', 'index.html'),
   `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Google Drive Storage Explorer — preview</title></head><body>\n${out}\n</body></html>`);
+<title>Google Drive Storage Explorer — preview</title></head><body>\n${out}\n${AUTOSCAN}\n</body></html>`);
 console.log('preview/index.html written');

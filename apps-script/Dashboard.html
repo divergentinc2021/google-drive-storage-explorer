@@ -32,6 +32,7 @@ function dsInit() {
   document.getElementById('btnScan').addEventListener('click', dsScan);
   document.getElementById('btnTheme').addEventListener('click', dsToggleTheme);
   document.getElementById('btnUp').addEventListener('click', dsZoomUp);
+  document.getElementById('btnRelief').addEventListener('click', dsToggleRelief);
   document.getElementById('btnCsv').addEventListener('click', dsExportCsv);
   document.getElementById('btnRclone').addEventListener('click', dsShowRclone);
   document.getElementById('btnTrash').addEventListener('click', dsTrashSelected);
@@ -320,9 +321,11 @@ function dsRenderQuota() {
     : dsEsc(tmFmtBytes(p.usage)) + ' used <small>· no storage cap published for this account</small>';
 
   var segs = [
-    { k: 'live', label: 'Drive files (live)', v: p.live, c: 'var(--size-6)' },
-    { k: 'trash', label: 'Drive trash', v: p.trash, c: 'var(--size-4)' },
-    { k: 'other', label: 'Gmail + Photos', v: p.other, c: 'var(--size-2)' }
+    // Brand tokens, not ramp steps: these are nominal categories, so they must
+    // not shift when the treemap's sequential encoding is retuned.
+    { k: 'live', label: 'Drive files (live)', v: p.live, c: 'var(--brand-strong)' },
+    { k: 'trash', label: 'Drive trash', v: p.trash, c: 'var(--brand-mid)' },
+    { k: 'other', label: 'Gmail + Photos', v: p.other, c: 'var(--brand-soft)' }
   ];
   if (p.capped) segs.push({ k: 'free', label: 'Free', v: p.free, c: 'var(--grid)' });
 
@@ -736,6 +739,15 @@ function dsDialog(html) {
   document.getElementById('dlgBody').innerHTML = html;
   var d = document.getElementById('dlg');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+}
+
+function dsToggleRelief() {
+  var b = document.getElementById('btnRelief');
+  var on = b.getAttribute('aria-pressed') !== 'true';
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.textContent = on ? '◨ 3D relief' : '▭ Flat';
+  tmSetRelief(on);
+  document.getElementById('legend').innerHTML = tmLegendHtml();
 }
 
 function dsToggleTheme() {

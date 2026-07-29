@@ -1,29 +1,77 @@
 <script>
 /*
-  Treemap engine — squarified layout (Bruls/Huizing/van Wijk) on a canvas.
+  Treemap engine — squarified layout (Bruls/Huizing/van Wijk) on a canvas, with
+  optional cushion relief (van Wijk & van de Wetering, 1999) — the shading that
+  gives SpaceSniffer its 3D read.
 
   NO IIFE. Everything here is a top-level `var` / `function` so Dashboard.html
   can actually see it. Wrapping this in an IIFE would make every call from the
   next script block throw ReferenceError inside a handler — i.e. a dead button
   with nothing in the console until you go looking.
+
+  Render is split in two on purpose:
+    tmRender()  lays out, fills, shades, labels — then snapshots to TM_BUF.
+    tmPaint()   blits TM_BUF and draws the hover ring.
+  Hover fires on every mouse move and only ever calls tmPaint(). Re-running the
+  layout and the per-pixel shading on mousemove is what would make relief mode
+  unusable, so the buffer is the difference between "3D" and "3D at 4fps".
 */
 
 var TM_CANVAS = null, TM_CTX = null, TM_TIP = null;
+var TM_BUF = null, TM_BUF_CTX = null;   // last full frame; hover repaints from this
 var TM_ROOT = null;          // node currently filling the canvas
 var TM_MODE = 'size';        // 'size' | 'age'
+var TM_RELIEF = true;        // cushion shading on/off
 var TM_RECTS = [];           // hit-test index, draw order
 var TM_RAMP_SIZE = [], TM_RAMP_AGE = [];
-var TM_MAXBYTES = 1;
-var TM_LOGMIN = 0, TM_LOGMAX = 1;  // log-range of the leaves on screen
+var TM_LOGMIN = 0, TM_LOGMAX = 1;  // log-range of the tiles on screen
 var TM_ONZOOM = null;        // set by Dashboard
 var TM_ONOPEN = null;        // set by Dashboard — double-click opens in Drive
 var TM_HOVER = null;
 var TM_CLICK_TIMER = null;   // single-click zoom, cancelled by a double-click
+var TM_RESIZE_TIMER = null;  // resize coalescing — see tmInit
+var TM_DPR = 1;
+var TM_PIX = null;           // the frame's pixels — label ink is sampled from it
+var TM_STROKE = '#fff', TM_PLANE = '#fff', TM_OUTLINE = '#000';
+var TM_SURFACE = '#fff', TM_BORDER = '#ccc';
+var TM_INK_DARK = '#0b0b0b', TM_INK_LIGHT = '#ffffff';
+var TM_LUM_DARK = 0, TM_LUM_LIGHT = 1;
 
-var TM_MAX_DEPTH = 3;
+/* Deeper than the old 3: the real Drive nests My Drive > client group > project
+   > shot folder > files, so a cap of 3 stopped at the shot folder and threw away
+   the structure the map exists to show. The TM_MIN_RECURSE pixel guard, not the
+   depth cap, is what keeps it from turning into a haze. */
+var TM_MAX_DEPTH = 5;
 var TM_MIN_TILE = 3;         // px — below this nothing is drawn
-var TM_MIN_RECURSE = 34;     // px — below this a folder is drawn flat
-var TM_HEADER = 15;          // px — folder title strip
+var TM_MIN_RECURSE = 40;     // px — below this a folder is drawn flat
+var TM_HEADER = 15;          // px — fallback title strip
+
+/*
+  Gutters and title strips, per depth.
+
+  A uniform 1px pad and a uniform 15px header is what made the map read as one
+  undifferentiated field: at a glance there was nothing to tell you where one
+  client's work stopped and the next began. Widening the gutter at the shallow
+  levels — where there are few tiles and space to spare — and tightening it
+  further down gives the eye a hierarchy to land on before it reads any tile.
+  Index by depth; anything deeper takes the last entry.
+*/
+/* Wide at the top, tight below. There are only two depth-1 and eight depth-2
+   containers, so a generous gutter there is nearly free in area terms while
+   being the thing that separates one client's work from the next; the depth
+   3-4 levels hold most of the containers, so a gutter there is what actually
+   costs data area. Measured on the preview: this keeps 62% of the canvas as
+   readable tile against 70% for a flat 1px gutter that separated nothing. */
+var TM_PAD = [0, 6, 3, 2, 1, 1];
+var TM_HEADERS = [0, 20, 16, 13, 12, 12];
+function tmAt(arr, depth) { return arr[depth < arr.length ? depth : arr.length - 1]; }
+
+/* Label gates. Terminal tiles have to earn a label — labelling everything down
+   to 54x17 is most of the "busy". Containers always label their strip: that is
+   the structure, and it is what you read first. */
+var TM_LABEL_W = 72, TM_LABEL_H = 28;         // terminal: name
+var TM_LABEL_SZ_W = 100, TM_LABEL_SZ_H = 40;  // terminal: name + size
+var TM_HEAD_MIN_W = 104;                     // container: header strip + title
 
 /** Age bands. Ordered, so the ramp is ordinal (one hue), never categorical. */
 var TM_AGE_BANDS = [
@@ -51,6 +99,37 @@ function tmFmtDays(d) {
   return (y < 10 ? y.toFixed(1) : y.toFixed(0)) + 'y ago';
 }
 
+// ── colour maths ────────────────────────────────────────────────────────────
+/** getComputedStyle hands back the literal token text, so both forms show up. */
+function tmParseColor(c) {
+  c = String(c || '').trim();
+  if (c.charAt(0) === '#') {
+    if (c.length === 4) {
+      return [parseInt(c.charAt(1) + c.charAt(1), 16),
+              parseInt(c.charAt(2) + c.charAt(2), 16),
+              parseInt(c.charAt(3) + c.charAt(3), 16)];
+    }
+    return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  }
+  var m = /rgba?\(([^)]+)\)/.exec(c);
+  if (m) {
+    var p = m[1].split(/[,\s/]+/);
+    return [parseFloat(p[0]) | 0, parseFloat(p[1]) | 0, parseFloat(p[2]) | 0];
+  }
+  return [128, 128, 128];
+}
+function tmChanLin(v) {
+  v /= 255;
+  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+function tmLum(rgb) {
+  return 0.2126 * tmChanLin(rgb[0]) + 0.7152 * tmChanLin(rgb[1]) + 0.0722 * tmChanLin(rgb[2]);
+}
+function tmContrast(a, b) {
+  var hi = a > b ? a : b, lo = a > b ? b : a;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /** Read the validated ramps out of CSS so light/dark switching is automatic. */
 function tmReadRamps() {
   var cs = getComputedStyle(document.getElementById('app'));
@@ -58,6 +137,15 @@ function tmReadRamps() {
   for (var i = 0; i < 8; i++) TM_RAMP_SIZE.push(cs.getPropertyValue('--size-' + i).trim());
   TM_RAMP_AGE = [];
   for (var j = 0; j < 5; j++) TM_RAMP_AGE.push(cs.getPropertyValue('--age-' + j).trim());
+  TM_STROKE = cs.getPropertyValue('--tile-stroke').trim();
+  TM_PLANE = cs.getPropertyValue('--plane').trim();
+  TM_SURFACE = cs.getPropertyValue('--surface-1').trim();
+  TM_BORDER = cs.getPropertyValue('--baseline').trim();
+  TM_OUTLINE = cs.getPropertyValue('--text-primary').trim();
+  TM_INK_DARK = cs.getPropertyValue('--tile-ink-dark').trim() || '#0b0b0b';
+  TM_INK_LIGHT = cs.getPropertyValue('--tile-ink-light').trim() || '#ffffff';
+  TM_LUM_DARK = tmLum(tmParseColor(TM_INK_DARK));
+  TM_LUM_LIGHT = tmLum(tmParseColor(TM_INK_LIGHT));
 }
 
 /**
@@ -65,7 +153,6 @@ function tmReadRamps() {
  * normalised against the range ACTUALLY ON SCREEN, not against the drive total.
  * Normalising against the total made every file land on step 6-7 (a 5 GB file
  * over a 304 GB root is log-ratio .85) and painted the entire map one red.
- * Anchoring to the visible min/max is what makes the ramp discriminate.
  */
 function tmColorForSize(bytes) {
   if (!bytes) return TM_RAMP_SIZE[0];
@@ -75,16 +162,23 @@ function tmColorForSize(bytes) {
   return TM_RAMP_SIZE[i];
 }
 
-/** Log-range of the leaves currently laid out. Recomputed every draw. */
+/**
+ * Log-range of the tiles that actually GET A FILL. Recomputed every draw.
+ *
+ * This must measure the same set it paints. Measuring file leaves instead was
+ * the bug behind the all-one-red map: a folder deeper than TM_MAX_DEPTH is
+ * drawn flat, as an aggregate tile, so on a real Drive (five levels) not one
+ * leaf was ever laid out — the loop counted zero tiles, fell through to the
+ * clamp, and every tile on screen resolved to step 7. Terminal rects are
+ * exactly the tiles whose fill is visible, so they are what sets the range.
+ */
 function tmComputeScale() {
   var lo = Infinity, hi = -Infinity;
   for (var i = 0; i < TM_RECTS.length; i++) {
     var r = TM_RECTS[i];
-    if (r.depth === 0) continue;
-    var n = r.node;
-    if (n.kind === 0 && n.children && n.children.length) continue; // containers
-    if (!(n.bytes > 0)) continue;
-    var v = Math.log(n.bytes);
+    if (r.depth === 0 || !r.terminal) continue;
+    if (!(r.node.bytes > 0)) continue;
+    var v = Math.log(r.node.bytes);
     if (v < lo) lo = v;
     if (v > hi) hi = v;
   }
@@ -94,6 +188,7 @@ function tmComputeScale() {
   if (hi - lo < 1.6) lo = hi - 1.6;
   TM_LOGMIN = lo; TM_LOGMAX = hi;
 }
+
 function tmAgeBand(days) {
   if (days < 0) return 0;
   for (var i = 0; i < TM_AGE_BANDS.length; i++) if (days < TM_AGE_BANDS[i].max) return i;
@@ -148,18 +243,196 @@ function tmSquarify(nodes, x, y, w, h) {
   return out;
 }
 
+// ── cushion relief ──────────────────────────────────────────────────────────
+/*
+  van Wijk & van de Wetering. Every tile carries a parabolic height field; the
+  coefficients accumulate down the recursion with the ridge height attenuated
+  per level, so a leaf's bump sits on top of its parents' broader domes and the
+  nesting becomes visible without a single extra border.
+
+  Shading is a luminance signal and the size ramp ALREADY encodes magnitude in
+  luminance, so the two will fight unless the relief is confined to shape.
+
+  Raw cushion intensity is not confined. Ridge steepness goes as 1/width, so a
+  small deep tile gets a tight bump that darkens its whole area while a large
+  shallow one stays near unlit — measured here, centre intensity ran .70 to .97
+  purely as a function of tile geometry. On a ramp where darker means bigger
+  that inverts the reading: the small tile looks like the heavier one.
+
+  So every tile's shading is normalised to unit mean (tmMeanIntensity). Relief
+  then only ever redistributes brightness WITHIN a tile — the tile's average
+  stays exactly the ramp step its bytes earned, and the gradient is free to
+  carry the nesting. TM_RELIEF_S sets how pronounced that gradient is; it no
+  longer trades away the data.
+*/
+var TM_H0 = 0.55;            // ridge height at depth 1
+var TM_F = 0.78;             // per-level attenuation
+var TM_LX = 0.09759, TM_LY = -0.19518, TM_LZ = 0.9759;   // light, near-vertical
+var TM_IA = 0.45, TM_IS = 0.55;   // ambient / specular split
+var TM_RELIEF_S = 0.55;      // how much of the shaded result to keep
+
+/*
+  Ambient occlusion, in two places, because a treemap has two kinds of surface.
+
+  INSIDE a tile: ambient light is occluded near the walls, so a band around each
+  edge darkens and corners — occluded on two sides — darken twice. That is the
+  `tmAoAt` term, folded into the same per-pixel pass as the relief and covered by
+  the same unit-mean normalisation. It has to be: AO darkens edges, a small tile
+  is nearly all edge, so unnormalised AO would darken small tiles more than large
+  ones and re-run exactly the size bias the relief normalisation exists to stop.
+
+  BETWEEN tiles: each tile casts a contact shadow into the gutter it sits in.
+  This one is free of data concerns — the gutters are neutral scaffolding and
+  encode nothing — so it can be laid on properly, and it is what actually sells
+  the tiles as raised blocks in a tray rather than a flat mosaic.
+
+  The AO radius scales with the tile so the darkened FRACTION is constant; a
+  fixed radius would again hit small tiles harder than large ones.
+*/
+var TM_AO_S = 0.42;          // inside-tile occlusion strength
+var TM_AO_FRAC = 0.20;       // radius as a fraction of the tile's short side
+var TM_AO_MIN = 2, TM_AO_MAX = 11;
+var TM_CONTACT_BLUR = 7;     // gutter contact-shadow spread, px
+var TM_CONTACT_A = 0.34;     // gutter contact-shadow opacity
+
+/** Smoothstep falloff from a wall. 0 at the wall, 1 by `r` px in. No exp(). */
+function tmAoAt(dx, dy, r) {
+  var tx = dx < r ? dx / r : 1, ty = dy < r ? dy / r : 1;
+  var sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+  return 1 - TM_AO_S * (1 - sx * sy);
+}
+/* Scratch columns for the shading pass, grown on demand and reused across
+   tiles and frames — a fresh pair of arrays per tile per render is avoidable
+   garbage at 150 tiles a frame. */
+var TM_COL_N = 0, TM_COL_NX = null, TM_COL_NX2 = null, TM_COL_AO = null;
+
+function tmAoRadius(w, h) {
+  var r = TM_AO_FRAC * (w < h ? w : h);
+  return r < TM_AO_MIN ? TM_AO_MIN : (r > TM_AO_MAX ? TM_AO_MAX : r);
+}
+
+function tmRidge(x1, x2, h, s1, s2) {
+  var d = x2 - x1;
+  if (!(d > 0) || !h) return [s1, s2];
+  return [s1 + 4 * h * (x2 + x1) / d, s2 - 4 * h / d];
+}
+
+/**
+ * Mean intensity over a rect, on a coarse grid. The field is a smooth parabolic
+ * dome, so 9x9 lands within a fraction of a percent of the true mean at a
+ * thousandth of the cost of averaging every pixel.
+ */
+function tmMeanIntensity(c, x, y, w, h) {
+  var base = 1 - TM_RELIEF_S, amb = TM_RELIEF_S * TM_IA, spec = TM_RELIEF_S * TM_IS;
+  var aoR = tmAoRadius(w, h);
+  var N = 17, sum = 0;   // finer than the 9x9 the relief alone needed: the AO
+                         // band is a narrow feature and a coarse grid misses it
+  for (var iy = 0; iy < N; iy++) {
+    var fy = (iy + 0.5) / N, yc = y + h * fy;
+    var ny = -(2 * c.sy2 * yc + c.sy1);
+    var dy = h * (fy < 0.5 ? fy : 1 - fy);
+    for (var ix = 0; ix < N; ix++) {
+      var fx = (ix + 0.5) / N, xc = x + w * fx;
+      var nx = -(2 * c.sx2 * xc + c.sx1);
+      var cosa = (nx * TM_LX + ny * TM_LY + TM_LZ) / Math.sqrt(nx * nx + ny * ny + 1);
+      var lit = base + amb + (cosa > 0 ? spec * cosa : 0);
+      sum += lit * tmAoAt(w * (fx < 0.5 ? fx : 1 - fx), dy, aoR);
+    }
+  }
+  return sum / (N * N) || 1;
+}
+
+/** Multiply one rect's pixels by its cushion intensity, in place. */
+function tmShadeRect(img, r) {
+  var c = r.cush;
+  if (!c) return;
+  var d = img.data, W = img.width, H = img.height;
+  var x0 = Math.max(0, Math.round(r.x * TM_DPR)), x1 = Math.min(W, Math.round((r.x + r.w) * TM_DPR));
+  var y0 = Math.max(0, Math.round(r.y * TM_DPR)), y1 = Math.min(H, Math.round((r.y + r.h) * TM_DPR));
+  var base = 1 - TM_RELIEF_S, amb = TM_RELIEF_S * TM_IA, spec = TM_RELIEF_S * TM_IS;
+  // Unit-mean normalisation over relief AND occlusion together — see the notes
+  // above. Without it, geometry alone shifts a tile's average brightness by up
+  // to 30%, on a ramp where brightness is the value.
+  var norm = 1 / tmMeanIntensity(c, r.x, r.y, r.w, r.h);
+  var aoR = tmAoRadius(r.w, r.h);
+  var rx1 = r.x + r.w, ry1 = r.y + r.h;
+
+  /*
+   * Per-column terms hoisted out of the row loop. nx and the AO factor in x
+   * depend only on the column, so the smoothstep and a multiply-add come off
+   * every pixel; the sqrt and the divide stay, because cosa genuinely couples
+   * x and y.
+   *
+   * This is exact. The obvious cheaper trick — solve once per CSS pixel and
+   * share the result across the dpr block — was tried and measured: up to
+   * 40/255 of banding, p99 12.6/255, concentrated in the AO band where the
+   * field moves fastest. Do not reintroduce it.
+   */
+  var n = x1 - x0;
+  if (n > TM_COL_N) {
+    TM_COL_N = n + 256;
+    TM_COL_NX = new Float64Array(TM_COL_N);
+    TM_COL_NX2 = new Float64Array(TM_COL_N);
+    TM_COL_AO = new Float64Array(TM_COL_N);
+  }
+  for (var k = 0; k < n; k++) {
+    var xc = (x0 + k + 0.5) / TM_DPR;
+    var nx = -(2 * c.sx2 * xc + c.sx1);
+    TM_COL_NX[k] = nx * TM_LX;
+    TM_COL_NX2[k] = nx * nx;
+    var dxl = xc - r.x, dxr = rx1 - xc, dx = dxl < dxr ? dxl : dxr;
+    var tx = dx < aoR ? dx / aoR : 1;
+    TM_COL_AO[k] = tx * tx * (3 - 2 * tx);
+  }
+
+  for (var py = y0; py < y1; py++) {
+    var yc = (py + 0.5) / TM_DPR;
+    var ny = -(2 * c.sy2 * yc + c.sy1);
+    var nyL = ny * TM_LY + TM_LZ, ny2 = ny * ny + 1;
+    var dyt = yc - r.y, dyb = ry1 - yc, dy = dyt < dyb ? dyt : dyb;
+    var ty = dy < aoR ? dy / aoR : 1;
+    var sy = ty * ty * (3 - 2 * ty);
+    var row = (py * W + x0) * 4;
+    for (var j = 0; j < n; j++) {
+      var cosa = (TM_COL_NX[j] + nyL) / Math.sqrt(TM_COL_NX2[j] + ny2);
+      var I = (base + amb + (cosa > 0 ? spec * cosa : 0))
+            * (1 - TM_AO_S * (1 - TM_COL_AO[j] * sy)) * norm;
+      if (I < 0.62) I = 0.62; else if (I > 1.3) I = 1.3;
+      var i = row + j * 4;
+      d[i] = d[i] * I; d[i + 1] = d[i + 1] * I; d[i + 2] = d[i + 2] * I;
+    }
+  }
+}
+
 // ── recursive layout ────────────────────────────────────────────────────────
-function tmLayout(node, rect, depth) {
+/**
+ * `terminal` means nothing was laid out inside this rect, so its fill is what
+ * the eye sees. tmComputeScale and the relief pass both key off it.
+ */
+function tmLayout(node, rect, depth, cush, h) {
   if (rect.w < TM_MIN_TILE || rect.h < TM_MIN_TILE) return;
-  TM_RECTS.push({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, node: node, depth: depth });
+
+  var rx = tmRidge(rect.x, rect.x + rect.w, h, cush.sx1, cush.sx2);
+  var ry = tmRidge(rect.y, rect.y + rect.h, h, cush.sy1, cush.sy2);
+  var nc = { sx1: rx[0], sx2: rx[1], sy1: ry[0], sy2: ry[1] };
+
+  var self = {
+    x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+    node: node, depth: depth, terminal: true, cush: nc, head: 0
+  };
+  TM_RECTS.push(self);
 
   var kids = node.children;
   if (!kids || !kids.length) return;
   if (depth >= TM_MAX_DEPTH) return;
   if (rect.w < TM_MIN_RECURSE || rect.h < TM_MIN_RECURSE) return;
 
-  var pad = depth === 0 ? 0 : 1;
-  var head = (rect.h > TM_HEADER * 2.2 && rect.w > 48) ? TM_HEADER : 0;
+  var pad = tmAt(TM_PAD, depth);
+  var hdr = tmAt(TM_HEADERS, depth);
+  // No header without room to actually title it. A 60px-wide strip that cannot
+  // hold a name is pure overhead: it steals height from the children and adds
+  // an empty band to look at. Header and label share one condition on purpose.
+  var head = (rect.h > hdr * 2.2 && rect.w > TM_HEAD_MIN_W) ? hdr : 0;
   var inner = {
     x: rect.x + pad,
     y: rect.y + pad + head,
@@ -170,80 +443,300 @@ function tmLayout(node, rect, depth) {
 
   var sorted = kids.filter(function (c) { return c.bytes > 0; })
                    .sort(function (a, b) { return b.bytes - a.bytes; });
-  tmSquarify(sorted, inner.x, inner.y, inner.w, inner.h)
-    .forEach(function (r) { tmLayout(r.node, r, depth + 1); });
+  var laid = tmSquarify(sorted, inner.x, inner.y, inner.w, inner.h);
+  if (!laid.length) return;
+
+  self.terminal = false;
+  self.head = head;
+  var kidH = depth === 0 ? TM_H0 : h * TM_F;
+  laid.forEach(function (r) { tmLayout(r.node, r, depth + 1, nc, kidH); });
 }
 
 // ── render ──────────────────────────────────────────────────────────────────
 function tmResize() {
   if (!TM_CANVAS) return;
-  var dpr = window.devicePixelRatio || 1;
+  TM_DPR = window.devicePixelRatio || 1;
   var r = TM_CANVAS.getBoundingClientRect();
-  TM_CANVAS.width = Math.max(1, Math.round(r.width * dpr));
-  TM_CANVAS.height = Math.max(1, Math.round(r.height * dpr));
-  TM_CTX.setTransform(dpr, 0, 0, dpr, 0, 0);
+  TM_CANVAS.width = Math.max(1, Math.round(r.width * TM_DPR));
+  TM_CANVAS.height = Math.max(1, Math.round(r.height * TM_DPR));
+  TM_CTX.setTransform(TM_DPR, 0, 0, TM_DPR, 0, 0);
 }
 
-function tmDraw() {
+/**
+ * Mean luminance of the strip a label is about to cover, read back out of the
+ * frame just painted. Sampling beats predicting: one rule stays correct across
+ * the size ramp, the age ramp, the relief shading on top of either, a label
+ * sitting on a parent's header strip, and both themes.
+ */
+function tmSampleLum(x, y, w, h) {
+  if (!TM_PIX) return TM_LUM_LIGHT;
+  var d = TM_PIX.data, W = TM_PIX.width, H = TM_PIX.height;
+  return tmSampleFrom(d, W, H, x, y, w, h);
+}
+function tmSampleFrom(d, W, H, x, y, w, h) {
+  var py = Math.round((y + h / 2) * TM_DPR);
+  if (py < 0) py = 0; else if (py >= H) py = H - 1;
+  var sum = 0, n = 0;
+  for (var s = 0; s < 5; s++) {
+    var px = Math.round((x + w * (s + 0.5) / 5) * TM_DPR);
+    if (px < 0 || px >= W) continue;
+    var i = (py * W + px) * 4;
+    sum += tmLum([d[i], d[i + 1], d[i + 2]]);
+    n++;
+  }
+  return n ? sum / n : TM_LUM_LIGHT;
+}
+
+/**
+ * Luminance behind a label. With relief on the surface is shaded, so the only
+ * reliable answer is to read the pixels just painted. With relief off every
+ * surface is a flat fill and the token gives the answer exactly — and skipping
+ * that readback is most of what makes flat mode cheap, because getImageData
+ * over a retina canvas costs more than every fill on the map put together.
+ */
+function tmBgLum(r, x, y, w, h) {
+  if (TM_PIX) return tmSampleLum(x, y, w, h);
+  return tmLum(tmParseColor(r.terminal ? tmColorForNode(r.node) : TM_SURFACE));
+}
+
+/** Whichever ink wins the contrast ratio against what is actually behind it. */
+function tmInkForLum(l) {
+  return tmContrast(l, TM_LUM_LIGHT) >= tmContrast(l, TM_LUM_DARK) ? TM_INK_LIGHT : TM_INK_DARK;
+}
+/** @return {Array} [glyph ink, halo ink] — the halo is always the other one. */
+function tmInkPair(l) {
+  return tmInkForLum(l) === TM_INK_LIGHT
+    ? [TM_INK_LIGHT, TM_INK_DARK]
+    : [TM_INK_DARK, TM_INK_LIGHT];
+}
+
+/**
+ * Halo first, then the glyph.
+ *
+ * Picking the better of two inks is not sufficient on its own. Against a
+ * continuous ramp there is a crossover luminance where neither ink beats about
+ * 4.5:1, and a relief-shaded tile spans a gradient anyway — so any single
+ * per-tile ink choice is a compromise somewhere on the tile. Outlining each
+ * glyph in the opposite ink puts a guaranteed high-contrast boundary around
+ * every stroke regardless of what is behind it, which is what lifts the worst
+ * case off the AA floor instead of merely landing near it.
+ */
+/**
+ * Truncate to fit rather than hand canvas a maxWidth. fillText's maxWidth
+ * CONDENSES the glyphs to fit, and at 11px a squeezed stroke is both ugly and
+ * measurably thinner — thin enough that the halo has too little glyph left to
+ * work against, which is where the worst label contrast on the map came from.
+ * An ellipsis keeps every stroke at full weight.
+ */
+function tmFitText(text, maxW) {
+  text = String(text);
+  if (maxW <= 4) return '';
+  if (TM_CTX.measureText(text).width <= maxW) return text;
+  var lo = 0, hi = text.length;
+  while (lo < hi) {
+    var mid = (lo + hi + 1) >> 1;
+    if (TM_CTX.measureText(text.slice(0, mid) + '…').width <= maxW) lo = mid; else hi = mid - 1;
+  }
+  return lo > 0 ? text.slice(0, lo) + '…' : '';
+}
+
+function tmLabel(text, x, y, maxW, pair, alpha) {
+  text = tmFitText(text, maxW);
+  if (!text) return;
+  TM_CTX.globalAlpha = alpha * 0.72;
+  TM_CTX.strokeStyle = pair[1];
+  TM_CTX.lineWidth = 2;
+  TM_CTX.lineJoin = 'round';
+  TM_CTX.miterLimit = 2;
+  TM_CTX.strokeText(text, x, y);
+  TM_CTX.globalAlpha = alpha;
+  TM_CTX.fillStyle = pair[0];
+  TM_CTX.fillText(text, x, y);
+}
+
+function tmDrawLabels() {
+  for (var i = 0; i < TM_RECTS.length; i++) {
+    var r = TM_RECTS[i], n = r.node;
+    if (r.depth === 0) continue;
+    if (r.terminal) {
+      if (r.w < TM_LABEL_W || r.h < TM_LABEL_H) continue;
+    } else if (!r.head) continue;
+
+    // A container only ever labels its header strip. Its size line used to be
+    // drawn at +17px, which on a folder lands on top of its own children.
+    var strip = r.terminal ? Math.min(r.h - 2, 30) : Math.min(r.h - 2, r.head);
+    if (strip < 12) continue;
+
+    // Shallow clusters take a larger, heavier title. The size step is the
+    // cheapest way to make the hierarchy legible before anything is read.
+    var px = r.terminal ? 11 : (r.depth === 1 ? 13 : r.depth === 2 ? 12 : 11);
+    var yTop = r.terminal ? r.y + 3 : r.y + Math.max(1, (r.head - px) / 2);
+    var textW = Math.min(r.w - 10, 220);
+    var pair = tmInkPair(tmBgLum(r, r.x + 5, yTop, textW, px));
+
+    TM_CTX.save();
+    TM_CTX.beginPath();
+    TM_CTX.rect(r.x + 3, r.y + 1, r.w - 6, strip);
+    TM_CTX.clip();
+    TM_CTX.textBaseline = 'top';
+    TM_CTX.font = (r.terminal ? '' : '650 ') + px + 'px system-ui, -apple-system, sans-serif';
+
+    if (r.terminal) {
+      tmLabel(n.name, r.x + 5, r.y + 3, r.w - 10, pair, 1);
+      if (r.h >= TM_LABEL_SZ_H && r.w >= TM_LABEL_SZ_W) {
+        var szPair = tmInkPair(tmBgLum(r, r.x + 5, r.y + 17, textW, 10));
+        TM_CTX.font = '10px system-ui, -apple-system, sans-serif';
+        tmLabel(tmFmtBytes(n.bytes), r.x + 5, r.y + 17, r.w - 10, szPair, 0.88);
+      }
+    } else {
+      // Folder header: name left, total right — the aggregate is the whole
+      // point of a container tile and there is room for it on a header strip.
+      var sz = tmFmtBytes(n.bytes);
+      var szW = TM_CTX.measureText(sz).width + 12;
+      var room = r.w > 150 && szW < r.w * 0.45;
+      tmLabel(n.name, r.x + 5, yTop, r.w - 10 - (room ? szW : 0), pair, 1);
+      if (room) {
+        TM_CTX.textAlign = 'right';
+        tmLabel(sz, r.x + r.w - 5, yTop, szW, pair, 0.82);
+        TM_CTX.textAlign = 'left';
+      }
+    }
+    TM_CTX.restore();
+  }
+}
+
+function tmRender() {
   if (!TM_CANVAS || !TM_ROOT) return;
   tmReadRamps();
   tmResize();
-  var cs = getComputedStyle(document.getElementById('app'));
-  var stroke = cs.getPropertyValue('--tile-stroke').trim();
-  var ink = cs.getPropertyValue('--tile-label').trim();
-  var plane = cs.getPropertyValue('--plane').trim();
 
   var W = TM_CANVAS.clientWidth, H = TM_CANVAS.clientHeight;
   TM_CTX.clearRect(0, 0, W, H);
-  TM_CTX.fillStyle = plane;
+  TM_CTX.fillStyle = TM_PLANE;
   TM_CTX.fillRect(0, 0, W, H);
 
   TM_RECTS = [];
-  TM_MAXBYTES = Math.max(1, TM_ROOT.bytes);
-  tmLayout(TM_ROOT, { x: 0, y: 0, w: W, h: H }, 0);
+  tmLayout(TM_ROOT, { x: 0, y: 0, w: W, h: H }, 0,
+           { sx1: 0, sx2: 0, sy1: 0, sy2: 0 }, 0);
   tmComputeScale(); // must run after layout, before any fill
 
-  for (var i = 0; i < TM_RECTS.length; i++) {
-    var r = TM_RECTS[i], n = r.node;
-    if (r.depth === 0) continue; // the frame itself needs no fill
-
-    var isFolder = n.kind === 0 && n.children && n.children.length;
-    TM_CTX.fillStyle = tmColorForNode(n);
+  var i, r;
+  /*
+   * 1 · fills, parents first so children paint over them.
+   *
+   * A container is scaffolding, not data. It used to be filled with its own
+   * aggregate ramp colour, of which only the gutter and the header strip
+   * survived the children painting over it — so the map carried patches of
+   * data-coloured chrome that encoded a value you could not compare to
+   * anything, and every title sat on a saturated field. Filling containers
+   * with the panel surface instead means every coloured pixel on the map is a
+   * tile you can actually read, and the gutters become real separation.
+   */
+  // 1a · scaffolding first, ancestors before descendants (TM_RECTS is pre-order)
+  for (i = 0; i < TM_RECTS.length; i++) {
+    r = TM_RECTS[i];
+    if (r.depth === 0 || r.terminal) continue; // the frame itself needs no fill
+    TM_CTX.fillStyle = TM_SURFACE;
     TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+  }
 
-    // 2px surface gap between fills, drawn as a stroke on the shared edge
-    if (r.w > 4 && r.h > 4) {
-      TM_CTX.strokeStyle = stroke;
-      TM_CTX.lineWidth = r.depth === 1 ? 2 : 1;
+  /*
+   * 1b · contact shadows, BEFORE the tile faces go down.
+   *
+   * Every terminal tile is stamped with a canvas shadow, then step 1c paints
+   * the faces over the top. So the only shadow that survives is the part that
+   * spilled outside a tile — onto the gutters. That ordering is the whole
+   * trick: shadow a tile AFTER its neighbours are painted and you tint their
+   * faces, which on a luminance ramp means tinting their values, and you get a
+   * directional bias that depends on draw order. This way the shadows land
+   * only where nothing is encoded, and two tiles sharing a gutter darken it
+   * twice, which is what occlusion should do.
+   */
+  if (TM_RELIEF) {
+    TM_CTX.save();
+    TM_CTX.shadowColor = 'rgba(0,0,0,' + TM_CONTACT_A + ')';
+    TM_CTX.shadowBlur = TM_CONTACT_BLUR;
+    TM_CTX.shadowOffsetY = 1;
+    TM_CTX.fillStyle = '#000';
+    for (i = 0; i < TM_RECTS.length; i++) {
+      r = TM_RECTS[i];
+      if (r.depth === 0 || !r.terminal || r.w < 2 || r.h < 2) continue;
+      TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+    }
+    TM_CTX.restore();
+  }
+
+  // 1c · tile faces
+  for (i = 0; i < TM_RECTS.length; i++) {
+    r = TM_RECTS[i];
+    if (r.depth === 0 || !r.terminal) continue;
+    TM_CTX.fillStyle = tmColorForNode(r.node);
+    TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+  }
+
+  // 2 · edges. Containers get a hairline so a cluster reads as a bounded group.
+  //     Terminal tiles only get one with relief off — with relief on the
+  //     shading is the boundary, and a stroke on top of it just adds noise.
+  for (i = 0; i < TM_RECTS.length; i++) {
+    r = TM_RECTS[i];
+    if (r.depth === 0 || r.w <= 4 || r.h <= 4) continue;
+    if (!r.terminal) {
+      if (r.depth > 3) continue;
+      TM_CTX.strokeStyle = TM_BORDER;
+      TM_CTX.lineWidth = 1;
+      TM_CTX.globalAlpha = r.depth === 1 ? 0.9 : 0.5;
+      TM_CTX.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+      TM_CTX.globalAlpha = 1;
+    } else if (!TM_RELIEF) {
+      TM_CTX.strokeStyle = TM_STROKE;
+      TM_CTX.lineWidth = 1;
       TM_CTX.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
     }
+  }
 
-    // Selective direct labels only — never a label on every tile.
-    if (r.w > 54 && r.h > 17) {
-      TM_CTX.save();
-      TM_CTX.beginPath();
-      TM_CTX.rect(r.x + 3, r.y + 1, r.w - 6, r.h - 2);
-      TM_CTX.clip();
-      TM_CTX.fillStyle = ink;
-      TM_CTX.globalAlpha = isFolder ? .92 : .78;
-      TM_CTX.font = (isFolder ? '600 ' : '') + '11px system-ui, -apple-system, sans-serif';
-      TM_CTX.textBaseline = 'top';
-      TM_CTX.fillText(n.name, r.x + 5, r.y + 3, r.w - 10);
-      if (r.h > 32 && r.w > 74) {
-        TM_CTX.globalAlpha = .6;
-        TM_CTX.font = '10px system-ui, -apple-system, sans-serif';
-        TM_CTX.fillText(tmFmtBytes(n.bytes), r.x + 5, r.y + 17, r.w - 10);
-      }
-      TM_CTX.restore();
+  // 3 · relief + occlusion, then keep the pixels around so labels can sample
+  //     them. Flat mode never reads back — tmBgLum derives ink from the token.
+  TM_PIX = null;
+  if (TM_RELIEF) {
+    TM_PIX = TM_CTX.getImageData(0, 0, TM_CANVAS.width, TM_CANVAS.height);
+    for (i = 0; i < TM_RECTS.length; i++) {
+      r = TM_RECTS[i];
+      if (r.depth > 0 && r.terminal) tmShadeRect(TM_PIX, r);
     }
+    TM_CTX.putImageData(TM_PIX, 0, 0);
   }
 
-  if (TM_HOVER) {
-    TM_CTX.strokeStyle = ink;
-    TM_CTX.lineWidth = 2;
-    TM_CTX.strokeRect(TM_HOVER.x + 1, TM_HOVER.y + 1, TM_HOVER.w - 2, TM_HOVER.h - 2);
-  }
+  // 4 · labels last, ink chosen against the finished pixels
+  tmDrawLabels();
+
+  // 5 · snapshot for hover repaints
+  if (!TM_BUF) { TM_BUF = document.createElement('canvas'); TM_BUF_CTX = TM_BUF.getContext('2d'); }
+  TM_BUF.width = TM_CANVAS.width;
+  TM_BUF.height = TM_CANVAS.height;
+  TM_BUF_CTX.setTransform(1, 0, 0, 1, 0, 0);
+  TM_BUF_CTX.clearRect(0, 0, TM_BUF.width, TM_BUF.height);
+  TM_BUF_CTX.drawImage(TM_CANVAS, 0, 0);
 }
+
+/** Blit the last frame and draw the hover ring. Cheap enough for mousemove. */
+function tmPaint() {
+  if (!TM_CANVAS || !TM_BUF) return;
+  TM_CTX.setTransform(1, 0, 0, 1, 0, 0);
+  TM_CTX.clearRect(0, 0, TM_CANVAS.width, TM_CANVAS.height);
+  TM_CTX.drawImage(TM_BUF, 0, 0);
+  TM_CTX.setTransform(TM_DPR, 0, 0, TM_DPR, 0, 0);
+  if (!TM_HOVER) return;
+  // Two-tone ring: a single ink cannot stay visible across the whole ramp.
+  var r = TM_HOVER;
+  TM_CTX.strokeStyle = 'rgba(255,255,255,.92)';
+  TM_CTX.lineWidth = 3;
+  TM_CTX.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3);
+  TM_CTX.strokeStyle = 'rgba(0,0,0,.85)';
+  TM_CTX.lineWidth = 1;
+  TM_CTX.strokeRect(r.x + 3.5, r.y + 3.5, r.w - 7, r.h - 7);
+}
+
+function tmDraw() { tmRender(); tmPaint(); }
 
 // ── interaction ─────────────────────────────────────────────────────────────
 function tmHit(px, py) {
@@ -257,7 +750,7 @@ function tmHit(px, py) {
 function tmOnMove(ev) {
   var b = TM_CANVAS.getBoundingClientRect();
   var hit = tmHit(ev.clientX - b.left, ev.clientY - b.top);
-  if (hit !== TM_HOVER) { TM_HOVER = hit; tmDraw(); }
+  if (hit !== TM_HOVER) { TM_HOVER = hit; tmPaint(); }
   if (!hit) { TM_TIP.hidden = true; return; }
 
   var n = hit.node;
@@ -285,7 +778,7 @@ function tmOnMove(ev) {
   TM_TIP.style.top = Math.max(2, ly) + 'px';
 }
 
-function tmOnLeave() { TM_HOVER = null; TM_TIP.hidden = true; tmDraw(); }
+function tmOnLeave() { TM_HOVER = null; TM_TIP.hidden = true; tmPaint(); }
 
 function tmNodeAt(ev) {
   var b = TM_CANVAS.getBoundingClientRect();
@@ -329,6 +822,7 @@ function tmShortMime(m) {
 
 function tmSetRoot(node) { TM_ROOT = node; TM_HOVER = null; tmDraw(); }
 function tmSetMode(mode) { TM_MODE = mode; tmDraw(); }
+function tmSetRelief(on) { TM_RELIEF = !!on; if (TM_ROOT) tmDraw(); }
 
 function tmInit(canvasId, tipId, onZoom, onOpen) {
   TM_CANVAS = document.getElementById(canvasId);
@@ -340,7 +834,17 @@ function tmInit(canvasId, tipId, onZoom, onOpen) {
   TM_CANVAS.addEventListener('mouseleave', tmOnLeave);
   TM_CANVAS.addEventListener('click', tmOnClick);
   TM_CANVAS.addEventListener('dblclick', tmOnDblClick);
-  window.addEventListener('resize', function () { if (TM_ROOT) tmDraw(); });
+  /* Debounced. `resize` fires on every frame of a window drag, and a full
+     render is now tens of milliseconds — re-rendering per event queues work
+     faster than it drains and the drag stutters to a halt. Coalesce to one
+     render once the drag settles. */
+  window.addEventListener('resize', function () {
+    if (TM_RESIZE_TIMER) clearTimeout(TM_RESIZE_TIMER);
+    TM_RESIZE_TIMER = setTimeout(function () {
+      TM_RESIZE_TIMER = null;
+      if (TM_ROOT) tmDraw();
+    }, 120);
+  });
   if (window.matchMedia) {
     window.matchMedia('(prefers-color-scheme: dark)')
       .addEventListener('change', function () { if (TM_ROOT) tmDraw(); });
@@ -349,15 +853,20 @@ function tmInit(canvasId, tipId, onZoom, onOpen) {
 
 /** Legend markup for the active mode. Always present — identity is never colour alone. */
 function tmLegendHtml() {
+  var relief = TM_RELIEF
+    ? '<span>· <b>relief</b> shows nesting — depth, not a value</span>'
+    : '';
   if (TM_MODE === 'age') {
     return '<span>Last activity</span><div class="keys">' + TM_AGE_BANDS.map(function (b, i) {
       return '<span class="key"><i style="background:var(--age-' + i + ')"></i>' + b.label + '</span>';
-    }).join('') + '</div><span>· double-click a tile to open it in Drive</span>';
+    }).join('') + '</div>' + relief +
+    '<span>· double-click a tile to open it in Drive</span>';
   }
   var ramp = '';
   for (var i = 0; i < 8; i++) ramp += '<i style="background:var(--size-' + i + ')"></i>';
   return '<span>negligible</span><div class="ramp">' + ramp + '</div>' +
-         '<span>largest</span><span style="margin-left:6px">· click a folder to zoom, ' +
+         '<span>largest</span>' + relief +
+         '<span style="margin-left:6px">· click a folder to zoom, ' +
          '<b>double-click to open it in Drive</b>, ↑ Up to go back</span>';
 }
 </script>

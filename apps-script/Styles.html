@@ -5,14 +5,44 @@
   The two data ramps below were DERIVED AND VALIDATED, not hand-picked
   (tools/make_ramp.mjs + the dataviz validator). Do not "tidy" them by eye.
 
-  SIZE = sequential, one hue (OKLCH H 25°), monotone L, light→dark.
-    Its lightest step sits at 1.09:1 against the surface on purpose: for a
+  SIZE = sequential, MULTI-HUE (a black-body path), monotone L.
+    Light mode runs near-white neutral → gold → orange → deep red; dark mode
+    runs the same path the other way, near-black → maroon → orange → bright
+    yellow, so the biggest is always the most prominent against its surface.
+
+    Hue was added because the map is now shaded: relief + ambient occlusion
+    swing lightness WITHIN one tile by a median of 2.44 adjacent ramp steps, so
+    a ramp that varies only in lightness is partly drowned out by its own 3D.
+    Hue is the one channel the shading cannot touch. Minimum adjacent OKLab
+    distance .0744 → .0874, and both CVD simulations improved.
+
+    Its lightest step sits at 1.06:1 against the surface on purpose: for a
     sequential ramp the near-zero end is meant to recede into the surface, so
     negligible files read as plain grey. That is a documented exemption, NOT an
     unfixed contrast failure — the 2:1 floor applies to *ordinal* ramps.
 
-  AGE = ordinal (age bands are ordered, so they take one hue, not a rainbow).
-    Blue, passes every ordinal check in both modes.
+  AGE = ordinal. The bands are ORDERED, so the ramp must be rankable by eye.
+    It now walks mint -> turquoise -> teal -> blue -> navy: hue rotates 175->255
+    monotonically WHILE lightness falls monotonically. Multi-hue bought real
+    discriminability over the old single blue — minimum adjacent OKLab distance
+    .098 -> .1425 in light mode (+45%) and .1005 -> .1170 in dark (+16%), with
+    both CVD simulations improving too.
+
+    What was rejected: the same colours as a PALETTE — turquoise, green, sky
+    blue and navy at co-equal lightness. It scores a higher mean distance, and
+    it is still wrong, because an ordered variable rendered as unordered hues
+    cannot be ranked without the legend ("is turquoise more or less idle than
+    sky blue?"). It also failed lightness-monotonicity under both deuteranopia
+    and protanopia, so two bands collapse for ~8% of men. Monotone L is the
+    constraint that lets a multi-hue ramp degrade to a usable greyscale one;
+    give it up and the ramp stops being a ramp.
+
+  TILE INK is NOT a token per theme. A treemap tile's background is whatever
+  step of the ramp its value landed on plus whatever the relief shading did to
+  it, so one fixed ink cannot work: #0b0b0b on --size-7 is the unreadable black
+  -on-red the map used to ship. Treemap.html samples the pixels each label is
+  about to cover and picks whichever of the two inks below wins the contrast
+  ratio, so these are deliberately theme-independent candidates, not a value.
 */
 .viz-root {
   color-scheme: light;
@@ -31,13 +61,22 @@
   --serious: #ec835a;
   --critical: #d03b3b;
 
-  --size-0: #f5f1f1; --size-1: #eed4d1; --size-2: #e9b4af; --size-3: #e4948d;
-  --size-4: #dd726b; --size-5: #d34b49; --size-6: #c41e29; --size-7: #a40a1b;
+  --size-0: #f5f5f2; --size-1: #edd9a1; --size-2: #ecb65b; --size-3: #e49124;
+  --size-4: #d46e00; --size-5: #c14b00; --size-6: #ae1900; --size-7: #8a0020;
 
-  --age-0: #86b6ef; --age-1: #5598e7; --age-2: #2a78d6; --age-3: #1c5cab; --age-4: #0d366b;
+  --age-0: #a3e8d5; --age-1: #48bfbf; --age-2: #0090a8; --age-3: #006086; --age-4: #003167;
+
+  /* Brand / chrome. NOT the data ramp — buttons, the progress bar and the quota
+     meter used to borrow --size-4/5/6 directly, which meant the treemap's
+     encoding could not be changed without repainting half the UI. Same values
+     the red ramp has today, so chrome is unaffected by ramp work. */
+  --brand-soft: #e9b4af; --brand-mid: #dd726b; --brand: #d34b49;
+  --brand-strong: #c41e29; --brand-deep: #a40a1b;
 
   --tile-stroke: rgba(252,252,251,.85);
-  --tile-label: #0b0b0b;
+  /* Ink candidates — not overridden per theme, see the note above. */
+  --tile-ink-dark: #0b0b0b;
+  --tile-ink-light: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) .viz-root {
@@ -52,13 +91,15 @@
     --border: rgba(255, 255, 255, .10);
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-    --size-0: #2a2221; --size-1: #4a2c2a; --size-2: #6c3531; --size-3: #903c39;
-    --size-4: #b64340; --size-5: #da4b49; --size-6: #f55f5b; --size-7: #ff8a82;
+    --size-0: #2a2222; --size-1: #522d27; --size-2: #793a23; --size-3: #9f4a00;
+    --size-4: #b76700; --size-5: #cd8500; --size-6: #e1a400; --size-7: #f1c623;
 
-    --age-0: #cde2fb; --age-1: #9ec5f4; --age-2: #6da7ec; --age-3: #3987e5; --age-4: #184f95;
+    --age-0: #adeedb; --age-1: #62cfce; --age-2: #1daac4; --age-3: #0081b4; --age-4: #255896;
+
+  --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
+  --brand-strong: #f55f5b; --brand-deep: #ff8a82;
 
     --tile-stroke: rgba(26,26,25,.85);
-    --tile-label: #ffffff;
   }
 }
 :root[data-theme="dark"] .viz-root {
@@ -73,13 +114,15 @@
   --border: rgba(255, 255, 255, .10);
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-  --size-0: #2a2221; --size-1: #4a2c2a; --size-2: #6c3531; --size-3: #903c39;
-  --size-4: #b64340; --size-5: #da4b49; --size-6: #f55f5b; --size-7: #ff8a82;
+  --size-0: #2a2222; --size-1: #522d27; --size-2: #793a23; --size-3: #9f4a00;
+  --size-4: #b76700; --size-5: #cd8500; --size-6: #e1a400; --size-7: #f1c623;
 
-  --age-0: #cde2fb; --age-1: #9ec5f4; --age-2: #6da7ec; --age-3: #3987e5; --age-4: #184f95;
+  --age-0: #adeedb; --age-1: #62cfce; --age-2: #1daac4; --age-3: #0081b4; --age-4: #255896;
+
+  --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
+  --brand-strong: #f55f5b; --brand-deep: #ff8a82;
 
   --tile-stroke: rgba(26,26,25,.85);
-  --tile-label: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -126,15 +169,15 @@ select {
 .btn:hover:not(:disabled) { border-color: var(--baseline); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.sm { padding: 5px 10px; font-size: 12px; }
-.btn.primary { background: var(--size-6); border-color: var(--size-6); color: #fff; }
-.btn.primary:hover:not(:disabled) { background: var(--size-7); border-color: var(--size-7); }
+.btn.primary { background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--brand-deep); border-color: var(--brand-deep); }
 .btn.danger { background: transparent; border-color: var(--critical); color: var(--critical); }
 .btn.danger:hover:not(:disabled) { background: var(--critical); color: #fff; }
 .btn.ghost { background: transparent; }
 
 .progress { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; font-size: 12px; color: var(--text-secondary); }
 .progress .bar { flex: 1; height: 4px; background: var(--grid); border-radius: 99px; overflow: hidden; }
-.progress .bar i { display: block; height: 100%; width: 0; background: var(--size-5); transition: width .2s; }
+.progress .bar i { display: block; height: 100%; width: 0; background: var(--brand); transition: width .2s; }
 
 /* ── stat tiles ─────────────────────────────────────────────────────────── */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -186,15 +229,19 @@ select {
 /* Nominal categories: every bar takes the SAME hue. Colouring them by value
    would re-encode what the bar length already shows and waste the channel. */
 .bar { flex: none; width: 84px; height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
-.bar i { display: block; height: 100%; background: var(--size-5); border-radius: 4px; }
+.bar i { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
 .row .ext { flex: none; font-weight: 600; min-width: 62px; }
 .row .num { flex: none; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 12px; min-width: 66px; text-align: right; }
 .row .btnmeasure { flex: none; }
 
 /* ── treemap ────────────────────────────────────────────────────────────── */
 .mapwrap { padding-bottom: 12px; }
-.canvasbox { position: relative; width: 100%; height: 480px; border-radius: 10px; overflow: hidden; background: var(--plane); }
-@media (max-width: 700px) { .canvasbox { height: 340px; } }
+/* 600, not 480. Five levels of nesting in 480px is the single biggest reason
+   the map read as busy — every tile was near its label's minimum size, so the
+   text sat wall-to-wall. Height is the one dimension that buys breathing room
+   without giving up any data area. */
+.canvasbox { position: relative; width: 100%; height: 600px; border-radius: 10px; overflow: hidden; background: var(--plane); }
+@media (max-width: 700px) { .canvasbox { height: 380px; } }
 #map { width: 100%; height: 100%; display: block; cursor: pointer; }
 .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .tip {

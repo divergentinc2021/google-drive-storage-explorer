@@ -67,35 +67,44 @@ const ANCHOR = '#e34948'; // documented categorical red (light mode)
 const a = hexToOklch(ANCHOR);
 console.log(`anchor ${ANCHOR} -> L=${a.L.toFixed(3)} C=${a.C.toFixed(3)} H=${a.H.toFixed(1)}\n`);
 
-// 8 stops, near-neutral -> deep red. L strictly decreasing, C rising off ~0.
-const STOPS = [
-  // L evenly spaced over 0.962 -> 0.456 (gap 0.072, clears the 0.06 floor);
-  // C rises off ~0 so the near-zero end reads as a neutral grey.
-  { L: 0.962, C: 0.004 }, // 0  near-zero  (reads grey against the light surface)
-  { L: 0.890, C: 0.030 },
-  { L: 0.817, C: 0.062 },
-  { L: 0.745, C: 0.098 },
-  { L: 0.673, C: 0.135 },
-  { L: 0.600, C: 0.172 },
-  { L: 0.528, C: 0.198 },
-  { L: 0.456, C: 0.180 }, // 7  largest
-];
-const H = a.H;
-const light = STOPS.map((s) => oklchToHex(gamutFit({ ...s, H })));
+/*
+  8 stops, MULTI-HUE: a black-body path (yellow -> orange -> red) rather than one
+  red hue, with L strictly monotone and C rising off ~0 at the near-zero end.
 
-// Dark mode: same hue, anchor flips -- near-zero sits just above the dark
-// surface and magnitude climbs toward a bright red.
-const STOPS_DARK = [
-  { L: 0.260, C: 0.012 },
-  { L: 0.330, C: 0.045 },
-  { L: 0.400, C: 0.080 },
-  { L: 0.470, C: 0.115 },
-  { L: 0.540, C: 0.150 },
-  { L: 0.610, C: 0.180 },
-  { L: 0.680, C: 0.185 },
-  { L: 0.760, C: 0.155 },
-];
-const dark = STOPS_DARK.map((s) => oklchToHex(gamutFit({ ...s, H })));
+  Why hue was added. The static gain looks small on flat swatches -- minimum
+  adjacent OKLab distance .0744 -> .0874 in light mode. The real reason is that
+  the treemap now shades every tile: measured on the preview, relief + ambient
+  occlusion swing lightness WITHIN a single tile by a median of 2.44 adjacent
+  ramp steps (p90 3.18). The tile's mean is normalised so it still lands on the
+  right step, but locally lightness is dominated by shape. Hue is the one channel
+  the shading cannot touch, so a hue-varying ramp keeps discriminating where a
+  purely lightness-varying one is being drowned out by its own 3D.
+
+  Monotone L is non-negotiable: it is what keeps the ramp rankable AND what makes
+  it degrade to a usable greyscale ramp under red-green CVD -- which matters
+  doubly here, because yellow-orange-red is exactly the axis that CVD compresses.
+  Both simulations improve against the old ramp (deuteranopia .0685 -> .0786,
+  protanopia .0639 -> .0856).
+*/
+const lerp = (a1, b1, t) => a1 + (b1 - a1) * t;
+const ramp = (L0, L1, H0, H1, Cs) =>
+  Cs.map((C, i) => {
+    const t = i / (Cs.length - 1);
+    return oklchToHex(gamutFit({ L: lerp(L0, L1, t), C, H: lerp(H0, H1, t) }));
+  });
+
+// Light: near-white neutral -> gold -> orange -> deep red. Step 0 sits 0.0123
+// from the surface, so negligible files still recede -- that is the documented
+// sequential exemption, and the multi-hue version tightened it rather than
+// losing it.
+const light = ramp(0.970, 0.400, 102, 20,
+  [0.004, 0.075, 0.125, 0.150, 0.165, 0.180, 0.195, 0.180]);
+
+// Dark: the same path run the other way -- near-black just above the surface,
+// climbing through maroon and orange to a bright yellow. Brightest is biggest,
+// the direction the dark ramp already used; only the hue path is new.
+const dark = ramp(0.260, 0.840, 20, 92,
+  [0.012, 0.055, 0.095, 0.135, 0.165, 0.180, 0.175, 0.165]);
 
 const show = (name, arr) => {
   console.log(name);
@@ -107,3 +116,27 @@ const show = (name, arr) => {
 };
 show('SIZE ramp / light', light);
 show('SIZE ramp / dark', dark);
+
+/*
+  AGE ramp — ordinal, five bands, multi-hue.
+  Hue rotates monotonically WHILE L falls monotonically; that pairing is what
+  keeps it rankable by eye and what makes it degrade to a usable greyscale ramp
+  under red-green CVD. A version with the same colours at co-equal lightness was
+  measured and rejected: higher mean separation, but not L-monotone under either
+  deuteranopia or protanopia, and not rankable without consulting the legend.
+*/
+const ageStops = (Ls, Cs) => Ls.map((L, i) => oklchToHex(gamutFit({ L, C: Cs[i], H: AGE_H[i] })));
+const AGE_H = [175, 195, 215, 235, 255];
+show('AGE ramp / light', ageStops([0.88, 0.74, 0.60, 0.46, 0.32], [0.075, 0.105, 0.120, 0.130, 0.110]));
+show('AGE ramp / dark',  ageStops([0.90, 0.79, 0.68, 0.57, 0.46], [0.070, 0.100, 0.115, 0.125, 0.115]));
+
+// Minimum adjacent separation is the number that matters — a ramp is only as
+// readable as its closest neighbouring pair, since that is the comparison two
+// touching tiles force you to make. Mean separation hides exactly that.
+const oklabOf = (hex) => linToOklab(hexToRgb(hex).map(srgbToLin));
+const minAdj = (arr) => Math.min(...arr.slice(1).map((h, i) => {
+  const a = oklabOf(arr[i]), b = oklabOf(h);
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}));
+console.log('min adjacent OKLab distance');
+console.log(`  SIZE light ${minAdj(light).toFixed(4)}   SIZE dark ${minAdj(dark).toFixed(4)}`);
