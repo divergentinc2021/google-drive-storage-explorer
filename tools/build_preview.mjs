@@ -134,6 +134,9 @@ var MOCK_API = {
       config: MK_CFG,
       caps: { nasVerify: false, sharedDrives: true },
       isOwner: true,
+      // Mirrors APP_VERSION / APP_UPDATED in Code.gs. Marked so nobody mistakes
+      // a preview screenshot for the deployed build.
+      version: 'v7-preview', updated: '2026-07-29',
       rootId: 'root', now: Date.now()
     };
   },

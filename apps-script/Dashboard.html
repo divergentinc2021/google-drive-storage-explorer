@@ -59,6 +59,10 @@ function dsOnBoot(b) {
   DS_DEAD_DAYS = b.config.deadAfterDays || 365;
   DS_SMALL_FLOOR = b.config.smallFileFloorBytes || 1048576;
   document.getElementById('deadAfter').value = String(DS_DEAD_DAYS);
+  if (b.version) {
+    document.getElementById('ver').textContent =
+      b.version + (b.updated ? ' · ' + dsFmtDate(b.updated) : '');
+  }
   document.getElementById('acct').textContent =
     b.user + ' · ' + tmFmtBytes(b.quota.usage) +
     (b.quota.limit ? ' of ' + tmFmtBytes(b.quota.limit) : '') + ' used';
@@ -823,6 +827,20 @@ function dsToggleTheme() {
   r.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
   if (DS_TREE) tmDraw();
   document.getElementById('legend').innerHTML = tmLegendHtml();
+}
+
+/**
+ * "2026-07-29" -> "29 Jul 2026", by splitting the string rather than going
+ * through Date. `new Date('2026-07-29')` parses as UTC midnight, so formatting
+ * it in any negative-offset timezone renders the previous day — a release stamp
+ * that is off by one is worse than no release stamp.
+ */
+function dsFmtDate(iso) {
+  var M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var p = String(iso).split('-');
+  if (p.length !== 3 || !M[Number(p[1]) - 1]) return String(iso);
+  return Number(p[2]) + ' ' + M[Number(p[1]) - 1] + ' ' + p[0];
 }
 
 function dsEsc(s) {

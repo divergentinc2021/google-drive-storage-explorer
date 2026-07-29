@@ -14,6 +14,20 @@
  * .html) — no CDN, no external script.
  */
 
+// ─── release stamp ───────────────────────────────────────────────────────────
+/**
+ * Shown in the banner so you can tell at a glance which build you are looking at
+ * — the /dev URL and the versioned /exec URL routinely differ by a commit or two.
+ *
+ * BUMP BOTH BEFORE `clasp deploy`. This is the one thing in the project capable
+ * of silently lying: `clasp deploy` mints a version number on Google's side and
+ * has no way to write it back into the source, so nothing here fails if these go
+ * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
+ * day, ISO so it cannot be misread as month-first.
+ */
+var APP_VERSION = 'v7';
+var APP_UPDATED = '2026-07-29';
+
 // ─── capability flags ────────────────────────────────────────────────────────
 // A UI that ships separately from its backend must describe the BACKEND.
 // Flip V_NAS_VERIFY only once the QNAP agent is actually reporting manifests.
@@ -131,6 +145,8 @@ function getBootstrap() {
     caps: { nasVerify: V_NAS_VERIFY, sharedDrives: V_SHARED_DRIVES },
     isOwner: isOwner_(),
     rootId: Drive.Files.get('root', { fields: 'id' }).id,
+    version: APP_VERSION,
+    updated: APP_UPDATED,
     now: Date.now()
   };
 }

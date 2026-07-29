@@ -57,12 +57,28 @@ discover a typo.
 ## Deploy
 
 ```bash
-source ~/.claude/switch-clasp.sh studio
 cd apps-script && clasp push
 ```
 
-`clasp push` is free. `clasp deploy` spends one of the project's **200 lifetime
-versions**, which cannot be reclaimed — batch deploys.
+`clasp push` is free and updates the `@HEAD` deployment immediately. `clasp
+deploy` spends one of the project's **200 lifetime versions**, which cannot be
+reclaimed — batch deploys.
+
+Redeploy the **existing** versioned deployment so the public URL never changes:
+
+```bash
+clasp deploy -i AKfycbylQVtG6GnMNVvBB50j_HLyVDManm3qE0czIY6zh5-bYizESaBGXoKCLMscDjMEt_a7xw -d "v8 — what changed"
+```
+
+Omitting `-i` mints a second URL and leaves the old one frozen on its old
+version. `clasp list-deployments` is briefly stale straight after a deploy —
+re-run it before concluding the version pointer did not move.
+
+**Bump `APP_VERSION` and `APP_UPDATED` in `Code.gs` first**, then push, then
+deploy. They drive the version pill in the banner, and they are the one thing
+here that can silently lie: `clasp deploy` mints the version number on Google's
+side and cannot write it back into the source, so nothing breaks if they go
+stale — the banner just starts misreporting which build you are looking at.
 
 ## House rules
 
