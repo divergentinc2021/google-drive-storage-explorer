@@ -127,21 +127,48 @@ const ramp = (L0, L1, H0, H1, Cs, g) =>
 // Light: near-white neutral -> gold -> orange -> red -> deep purple-red. Step 0
 // sits 0.0123 from the surface, so negligible files still recede -- that is the
 // documented sequential exemption, not a contrast bug.
-// g 1.10 costs 0.6% of the normal-vision minimum gap (.1027 -> .1021) and buys
-// 5.8% on the protanope minimum (.0722 -> .0764), at identical uniformity. Swept
-// 0.80 to 1.32: below 1.0 the CVD gap collapses, and by 1.20 uniformity has gone
-// from 1.11 to 1.31 for no further CVD gain.
-const light = ramp(0.970, 0.340, 104, -24,
-  [0.004, 0.075, 0.125, 0.150, 0.165, 0.180, 0.195, 0.180], 1.10);
+/*
+  THE NEGLIGIBLE END IS YELLOW, NOT NEAR-WHITE. This reverses the "near-zero
+  recedes into the surface" exemption that earlier versions of this file
+  documented, and the reason is that the exemption stopped being true when
+  container tiles were changed to fill with --surface-1.
+
+  Once the scaffolding is surface-coloured, a near-white smallest step is not
+  receding into the BACKGROUND, it is colliding with the CHROME: a negligible
+  file and an empty gutter became the same colour. Measured, step 0 sat 0.0216
+  from --surface-1. It is now 0.1273, about 1.7 ramp steps, so a tiny file reads
+  as a tiny file rather than as part of the frame.
+
+  No gamma any more either. The gamma existed to buy colour-blind headroom back
+  on the old ramp, where there was little range to spare. Dropping the near-white
+  floor widened the lightness span from .630 to .685, and that supplies the
+  headroom directly: g 1.00 gives minAdj .1094 and uniformity 1.06 against the
+  old .1021 / 1.11. Swept 1.00 to 1.10 — every step up traded normal-vision
+  separation and uniformity for protanope separation, and there is no longer a
+  reason to make that trade.
+*/
+const light = ramp(0.925, 0.240, 96, -30,
+  [0.110, 0.145, 0.162, 0.175, 0.185, 0.195, 0.198, 0.180]);
 
 // Dark: the same path run the other way -- a purple-black floor climbing through
 // maroon and flame to a bright yellow. Brightest is biggest, because on a dark
 // plane the largest thing has to be the most prominent one; that inverts where
 // the purple sits relative to light mode, which is inherent and not a mistake.
-// No gamma here: the sweep showed g .86 buys 3.5% of protanope gap for 7% of the
-// normal-vision minimum and uniformity 1.06 -> 1.36. Not a trade worth making.
-const dark = ramp(0.225, 0.845, -24, 94,
-  [0.012, 0.055, 0.095, 0.135, 0.165, 0.180, 0.175, 0.165]);
+/*
+  No gamma here: the sweep showed g .86 buys 3.5% of protanope gap for 7% of the
+  normal-vision minimum and uniformity 1.06 -> 1.36. Not a trade worth making.
+
+  The floor is .235 with chroma .095, NOT a near-black. Dark mode has the same
+  collision the light ramp had, just with a different neighbour: --surface-1 in
+  dark is #1a1a19, so a near-black smallest step is indistinguishable from the
+  container scaffolding. Pushing the floor down to .190 for extra range made it
+  worse -- step 0 measured .0445 from --surface-1, under half a ramp step. At
+  .235/.095 it measures .0992 against a step size of .102, i.e. a full step of
+  separation, and the ramp still beats what it replaced on every axis: minAdj
+  .0968 -> .1023, worst CVD gap .0682 -> .0777.
+*/
+const dark = ramp(0.235, 0.895, -30, 98,
+  [0.095, 0.118, 0.140, 0.160, 0.178, 0.187, 0.181, 0.170]);
 
 const show = (name, arr) => {
   console.log(name);
@@ -179,8 +206,24 @@ show('SIZE ramp / dark', dark);
 // Both age ramps are left on linear lightness. They are the best-formed of the
 // four -- uniformity 1.03 and 1.02, and the widest adjacent gaps on the map --
 // and the gamma sweep degraded every metric in both directions.
-show('AGE ramp / light', ramp(0.86, 0.32, 150, 255, [0.110, 0.115, 0.115, 0.120, 0.110]));
-show('AGE ramp / dark',  ramp(0.90, 0.44, 150, 255, [0.105, 0.110, 0.115, 0.120, 0.115]));
+/*
+  SKY BLUE AT THE RECENT END WAS TESTED AND REJECTED. It was proposed to raise
+  contrast, and it does the opposite: sky blue sits at hue ~230, which is CLOSER
+  to the navy at 255 than green at 150 is, so the ramp's hue span collapses from
+  105 degrees to 25. Measured, minAdj .1421 -> .1359 and the ends moved from
+  .5686 apart to .5422. Less contrast, not more.
+
+  What the request actually wanted -- a punchier recent end -- came from keeping
+  green, pushing its chroma up (.110 -> .155) and widening the lightness span,
+  which lifts minAdj to .1577, the ends to .6462, and the worst CVD gap to .1419.
+  Every number better than both the shipped ramp and the sky-blue proposal.
+
+  The lightest band also has to clear --surface-1 now that containers are filled
+  with it, for the same reason the size ramp's floor is no longer near-white.
+  Higher chroma handles that here without giving up any lightness.
+*/
+show('AGE ramp / light', ramp(0.89, 0.28, 146, 258, [0.155, 0.145, 0.130, 0.128, 0.112]));
+show('AGE ramp / dark',  ramp(0.94, 0.34, 144, 260, [0.158, 0.148, 0.132, 0.130, 0.120]));
 
 // Minimum adjacent separation is the number that matters — a ramp is only as
 // readable as its closest neighbouring pair, since that is the comparison two

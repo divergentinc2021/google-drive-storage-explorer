@@ -32,17 +32,31 @@
     Hue is the one channel the shading cannot touch. Minimum adjacent OKLab
     distance .0744 → .0874, and both CVD simulations improved.
 
-    Its lightest step sits at 1.06:1 against the surface on purpose: for a
-    sequential ramp the near-zero end is meant to recede into the surface, so
-    negligible files read as plain grey. That is a documented exemption, NOT an
-    unfixed contrast failure — the 2:1 floor applies to *ordinal* ramps.
+    THE NEGLIGIBLE END IS YELLOW, and earlier versions of this comment argued
+    the opposite — that the near-zero step should recede into the surface so
+    tiny files read as plain grey. That exemption was correct until container
+    tiles were changed to fill with --surface-1. Once the scaffolding itself is
+    surface-coloured, a near-white smallest step is not receding into the
+    BACKGROUND, it is colliding with the CHROME: a negligible file and an empty
+    gutter became the same colour. Step 0 measured 0.0216 from --surface-1; it is
+    now 0.1273, roughly 1.7 ramp steps, so a tiny file reads as a tiny file.
+
+    Widening the ramp that way also removed the need for the lightness gamma —
+    the span went .630 → .685 and supplies the colour-blind headroom the gamma
+    was buying, at minAdj .1094 and uniformity 1.06 against the old .1021/1.11.
 
   AGE = ordinal. The bands are ORDERED, so the ramp must be rankable by eye.
-    It walks green -> turquoise -> teal -> blue -> navy: hue rotates 150->255
-    monotonically WHILE lightness falls monotonically. Multi-hue bought real
-    discriminability over the old single blue — minimum adjacent OKLab distance
-    .098 -> .142 in light mode (+45%) and .1005 -> .1243 in dark, with all three
-    CVD simulations improving too.
+    It walks green -> turquoise -> teal -> blue -> navy: hue rotates 146->258
+    monotonically WHILE lightness falls monotonically. Minimum adjacent OKLab
+    distance is .1577 in light mode and .1590 in dark, against .098/.1005 for the
+    single blue this replaced, with all three CVD simulations improving.
+
+    SKY BLUE AT THE RECENT END WAS TESTED AND REJECTED. It was proposed to raise
+    contrast and it does the reverse: sky blue sits near hue 230, CLOSER to the
+    navy at 255 than green at 150 is, so the hue span collapses from 105° to 25°.
+    Measured, minAdj .1421 -> .1359 and the ends went from .5686 to .5422 apart.
+    A punchier recent end comes from keeping green and raising its chroma
+    (.110 -> .155) plus widening the lightness span — which is what shipped.
 
     The recent end is a LIGHT green, and that is a constraint rather than a
     preference. A DARK green for "most recent" was asked for and measured: it
@@ -84,10 +98,10 @@
   --serious: #ec835a;
   --critical: #d03b3b;
 
-  --size-0: #f5f5f2; --size-1: #f3daa4; --size-2: #f7b163; --size-3: #ef8547;
-  --size-4: #da5a47; --size-5: #be2e50; --size-6: #950058; --size-7: #630055;
+  --size-0: #fce68f; --size-1: #fab949; --size-2: #ef8b20; --size-3: #dd5c20;
+  --size-4: #c12c33; --size-5: #980042; --size-6: #660044; --size-7: #390037;
 
-  --age-0: #9ce6ab; --age-1: #42bea4; --age-2: #008e97; --age-3: #005f7e; --age-4: #003167;
+  --age-0: #93f69b; --age-1: #00c6a3; --age-2: #008d95; --age-3: #005877; --age-4: #00265b;
 
   /* Brand / chrome. NOT the data ramp — buttons, the progress bar and the quota
      meter used to borrow --size-4/5/6 directly, which meant the treemap's
@@ -114,10 +128,10 @@
     --border: rgba(255, 255, 255, .10);
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-    --size-0: #201a1e; --size-1: #462534; --size-2: #722f3d; --size-3: #9f3b35;
-    --size-4: #c6500d; --size-5: #d87900; --size-6: #e7a000; --size-7: #f0c927;
+    --size-0: #350533; --size-1: #5d113f; --size-2: #882041; --size-3: #b23636;
+    --size-4: #d75508; --size-5: #e78400; --size-6: #f5af00; --size-7: #fbdc3a;
 
-    --age-0: #abf2b9; --age-1: #5fd0b7; --age-2: #00a9b4; --age-3: #007ea5; --age-4: #1f5390;
+    --age-0: #beffbd; --age-1: #1cd9b1; --age-2: #009fa8; --age-3: #00698e; --age-4: #0b3474;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
@@ -137,10 +151,10 @@
   --border: rgba(255, 255, 255, .10);
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-  --size-0: #201a1e; --size-1: #462534; --size-2: #722f3d; --size-3: #9f3b35;
-  --size-4: #c6500d; --size-5: #d87900; --size-6: #e7a000; --size-7: #f0c927;
+  --size-0: #350533; --size-1: #5d113f; --size-2: #882041; --size-3: #b23636;
+  --size-4: #d75508; --size-5: #e78400; --size-6: #f5af00; --size-7: #fbdc3a;
 
-  --age-0: #abf2b9; --age-1: #5fd0b7; --age-2: #00a9b4; --age-3: #007ea5; --age-4: #1f5390;
+  --age-0: #beffbd; --age-1: #1cd9b1; --age-2: #009fa8; --age-3: #00698e; --age-4: #0b3474;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
