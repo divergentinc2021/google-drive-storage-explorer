@@ -246,8 +246,22 @@ select {
 .note { font-size: 12px; margin: 0 0 10px; padding: 9px 12px; border-radius: 8px;
         background: var(--plane); border: 1px solid var(--border); color: var(--text-secondary); }
 .note b { color: var(--text-primary); }
+.note.tool { line-height: 1.6; }
+.note.tool .links { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 2px; }
+.note.tool .links a {
+  display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+  font-size: 12px; font-weight: 550; padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+}
+.note.tool .links a:hover { border-color: var(--baseline); }
+.note.tool small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+/* Dead folders and Migration classes are stacked at every width. Halving the
+   width of the dead-folder list is what made full Drive paths unreadable, and
+   Migration classes is five rows of prose next to a 380px scrolling list — side
+   by side it left a column of dead space and squeezed the thing people read. */
+.cols.stacked { grid-template-columns: 1fr; }
 
 .modes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -344,7 +358,15 @@ select {
 }
 .row .open:hover { color: var(--text-primary); border-color: var(--border); background: var(--surface-1); }
 .row.pick { cursor: pointer; }
-.row .nm small { display: block; color: var(--muted); font-size: 11px; }
+/* The ellipsis on .nm does NOT cover this. text-overflow applies to an element's
+   own inline content, and this is a block-level child, so it inherited nowrap and
+   then spilled with overflow-x:visible — measured at 830px past its box on a real
+   Drive path. The parent's overflow:hidden clipped it, which is why the page never
+   broke: the text just got sliced mid-character and ran under the size column. */
+.row .nm small {
+  display: block; color: var(--muted); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .row .sz { font-variant-numeric: tabular-nums; font-weight: 550; white-space: nowrap; }
 .row .ag { font-size: 11px; color: var(--text-secondary); white-space: nowrap; text-align: right; }
 .row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--critical); }

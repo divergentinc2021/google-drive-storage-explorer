@@ -7,19 +7,29 @@ safe to move to the QNAP and what must stay.
 ## What it does
 
 - **Treemap** — squarified layout on canvas, hand-rolled, no CDN. Click a folder
-  to zoom, breadcrumbs to come back.
-- **Colour by size** — sequential red ramp; negligible files fade to grey,
-  the mass goes deep red.
-- **Colour by age** — ordinal blue ramp over five activity bands, so dead regions
-  read as solid dark blocks.
+  to zoom, breadcrumbs to come back, double-click to open it in Drive.
+- **Colour by size** — sequential, multi-hue, monotone lightness. Light mode runs
+  pale yellow → orange → red → near-black purple; dark mode runs the same path
+  inverted, so the biggest thing is always the most prominent against its surface.
+- **Colour by age** — ordinal over five activity bands, green → turquoise → teal →
+  blue → navy, so dead regions read as solid dark blocks.
+- **3D relief** — cushion shading (van Wijk) plus ambient occlusion inside tiles
+  and as contact shadows in the gutters. Toggleable. Both are normalised to unit
+  mean per tile, so relief only ever redistributes brightness *within* a tile and
+  never shifts the ramp step its bytes earned.
+- **Hover detail** — on-map labels are deliberately terse; the full name, the full
+  Drive path, the migration class and the recommended action are in the tooltip.
 - **Dead folders** — folders whose every file is past the threshold
   (3 months → 2 years). Only the topmost folder of a dead chain is listed.
 - **Migration classes** — separates the two things people conflate:
   - *dead binaries* — the only category that actually frees quota
   - *Google-native files* — Docs/Sheets/Slides consume **~0 quota**, so deleting
     them frees nothing. They are an export job, not a space job.
-- **Manifest CSV** — per-file class + recommended action, to drive rclone.
+- **Manifest CSV** — per-file class + recommended action, with `md5Checksum`, to
+  drive rclone or to feed Storage Mapper.
 - **Gated trash** — reversible `trashed:true` only, never a permanent delete.
+- **Version pill** — the build and its date, in the banner, because the `/dev` and
+  `/exec` URLs routinely differ by a commit or two.
 
 ## Why the sync engine is not in Apps Script
 
@@ -28,18 +38,38 @@ never write to the NAS. The QNAP runs rclone and polls outbound; Apps Script is
 the dashboard, the inventory and the config store. Full setup:
 [docs/QNAP_SYNC.md](docs/QNAP_SYNC.md).
 
+## Doing the actual copy — Storage Mapper
+
+This dashboard decides *what* moves. The move itself is
+[**storage-mapper**](https://github.com/divergentinc2021/storage-mapper), a
+desktop app that runs on a machine which can see both the Drive mount and the
+QNAP share:
+
+- [Download the latest Windows installer](https://github.com/divergentinc2021/storage-mapper/releases/latest)
+- [How it works](https://github.com/divergentinc2021/storage-mapper#readme)
+
+The **manifest CSV** exported here is the interface between the two. Give Storage
+Mapper the CSV and it matches on `md5Checksum` rather than on size and name, so a
+file already on the NAS under a different name is recognised instead of being
+copied a second time. Without the CSV it falls back to size+name and renamed
+copies look new.
+
+Both links point at a private repo, so they 404 without access to the
+`divergentinc2021` organisation. The same two links are surfaced in the app, on
+the *Reclaimable* panel where the decision to copy actually gets made.
+
 ## Layout
 
 ```
 apps-script/     the deployed project (clasp root)
-  Code.gs        scan, classify, config, manifest, gated trash
+  Code.gs        scan, classify, config, manifest, gated trash, APP_VERSION
   Index.html     shell — includes the partials below
   Styles.html    tokens + layout (validated ramps live here)
-  Treemap.html   squarified layout + canvas renderer
-  Dashboard.html app logic
+  Treemap.html   squarified layout, cushion relief + occlusion, canvas renderer
+  Dashboard.html app logic, hover detail, quota meter, lists
 docs/QNAP_SYNC.md
 tools/
-  make_ramp.mjs      derives the size ramp (run, don't hand-pick)
+  make_ramp.mjs      derives BOTH ramps and prints their metrics (run, don't hand-pick)
   build_preview.mjs  assembles a browser preview from the real sources
 ```
 
@@ -86,9 +116,26 @@ stale — the banner just starts misreporting which build you are looking at.
   document; an IIFE makes its helpers invisible to the next block and the only
   symptom is a button that silently does nothing.
 - **The colour ramps are derived and validated, not chosen.** Re-run
-  `tools/make_ramp.mjs` and the dataviz validator before changing them. The size
-  ramp's lightest step is *meant* to sit near the surface — that is the
-  documented sequential exemption, not a contrast bug.
+  `tools/make_ramp.mjs` before changing them; it prints the ramps and the minimum
+  adjacent OKLab distance, which is the number that matters — a ramp is only as
+  readable as its closest neighbouring pair.
+- **Do not "even out" the ramp stops.** Adjacent-gap uniformity is already 1.02–1.11
+  (1.00 being perfect). Re-placing them at equal *arc length* along the OKLCH path
+  — the textbook fix — was measured at 1.5–2.0, i.e. worse: arc length is distance
+  along a curve, while the eye compares the *chord* between two touching tiles, and
+  a hue-rotating path curves enough that equal arcs give unequal chords.
+- **The negligible end is yellow, not near-white**, and that reverses an earlier
+  rule. It used to be near-neutral so tiny files receded into the surface. That
+  stopped being true once container tiles were filled with `--surface-1`: a
+  near-white smallest step no longer recedes into the *background*, it collides
+  with the *chrome*, and a negligible file became indistinguishable from an empty
+  gutter.
+- **Chrome must not read `--size-*`.** Buttons, the progress bar and the quota
+  meter use `--brand-*`. They used to borrow ramp steps directly, which meant the
+  treemap's encoding could not be retuned without repainting half the UI.
+- **Keep the preview mock at least as deep as the real Drive.** It was three folder
+  levels while the Drive had four, which is exactly how a colour-scale bug that
+  painted every tile the darkest step reached production invisibly.
 - **Storage numbers come from `quotaBytesUsed`**, the figure Google bills on —
   not `size`, which is absent on native files.
 
