@@ -86,11 +86,32 @@ console.log(`anchor ${ANCHOR} -> L=${a.L.toFixed(3)} C=${a.C.toFixed(3)} H=${a.H
   Both simulations improve against the old ramp (deuteranopia .0685 -> .0786,
   protanopia .0639 -> .0856).
 */
+/*
+  ON SPACING, because the obvious "improvement" here is a trap.
+
+  Adjacent-gap uniformity was measured for all four ramps: 1.11 and 1.06 for the
+  two size ramps, 1.03 and 1.02 for the two age ramps (1.00 being perfect). They
+  are already near-ideal, and every attempt to improve them made them worse.
+
+  In particular, re-placing the stops at equal ARC LENGTH along the OKLCH path —
+  which sounds like the textbook fix — produced uniformity of 1.5 to 2.0, i.e.
+  substantially worse than the linear-lightness ramps it was meant to replace.
+  Arc length is distance along a curve; what the eye compares between two
+  touching tiles is the CHORD between them. A hue-rotating path curves hard
+  through the a-b plane, so equal arcs give markedly unequal chords. Don't.
+
+  `g` is a gamma on lightness only (hue stays linear in t). It exists solely to
+  buy back the worst colour-blind adjacent gap, which for both size ramps is
+  protanopia at the red/purple end.
+*/
 const lerp = (a1, b1, t) => a1 + (b1 - a1) * t;
-const ramp = (L0, L1, H0, H1, Cs) =>
+const ramp = (L0, L1, H0, H1, Cs, g) =>
   Cs.map((C, i) => {
     const t = i / (Cs.length - 1);
-    return oklchToHex(gamutFit({ L: lerp(L0, L1, t), C, H: lerp(H0, H1, t) }));
+    return oklchToHex(gamutFit({
+      L: lerp(L0, L1, g ? Math.pow(t, g) : t),
+      C, H: lerp(H0, H1, t)
+    }));
   });
 
 /*
@@ -106,13 +127,19 @@ const ramp = (L0, L1, H0, H1, Cs) =>
 // Light: near-white neutral -> gold -> orange -> red -> deep purple-red. Step 0
 // sits 0.0123 from the surface, so negligible files still recede -- that is the
 // documented sequential exemption, not a contrast bug.
+// g 1.10 costs 0.6% of the normal-vision minimum gap (.1027 -> .1021) and buys
+// 5.8% on the protanope minimum (.0722 -> .0764), at identical uniformity. Swept
+// 0.80 to 1.32: below 1.0 the CVD gap collapses, and by 1.20 uniformity has gone
+// from 1.11 to 1.31 for no further CVD gain.
 const light = ramp(0.970, 0.340, 104, -24,
-  [0.004, 0.075, 0.125, 0.150, 0.165, 0.180, 0.195, 0.180]);
+  [0.004, 0.075, 0.125, 0.150, 0.165, 0.180, 0.195, 0.180], 1.10);
 
 // Dark: the same path run the other way -- a purple-black floor climbing through
 // maroon and flame to a bright yellow. Brightest is biggest, because on a dark
 // plane the largest thing has to be the most prominent one; that inverts where
 // the purple sits relative to light mode, which is inherent and not a mistake.
+// No gamma here: the sweep showed g .86 buys 3.5% of protanope gap for 7% of the
+// normal-vision minimum and uniformity 1.06 -> 1.36. Not a trade worth making.
 const dark = ramp(0.225, 0.845, -24, 94,
   [0.012, 0.055, 0.095, 0.135, 0.165, 0.180, 0.175, 0.165]);
 
@@ -149,6 +176,9 @@ show('SIZE ramp / dark', dark);
   it to the NAS" -- the two opposite actions on the map, and the pair you would
   most easily confuse. Not a trade worth making, so: green, but light.
 */
+// Both age ramps are left on linear lightness. They are the best-formed of the
+// four -- uniformity 1.03 and 1.02, and the widest adjacent gaps on the map --
+// and the gamma sweep degraded every metric in both directions.
 show('AGE ramp / light', ramp(0.86, 0.32, 150, 255, [0.110, 0.115, 0.115, 0.120, 0.110]));
 show('AGE ramp / dark',  ramp(0.90, 0.44, 150, 255, [0.105, 0.110, 0.115, 0.120, 0.115]));
 

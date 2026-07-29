@@ -18,6 +18,14 @@
     adjacent separation (.1141 vs .1027) purely because it stops being ordered.
     Adjacent separation only means anything while the ramp is still sequential.
 
+    SPACING IS ALREADY SOLVED — do not "even out" these stops. Adjacent-gap
+    uniformity is 1.11 here and 1.06 in dark mode (1.00 = perfect), and 1.03/1.02
+    for age. Re-placing the stops at equal ARC LENGTH along the OKLCH path, which
+    is the textbook move, was tried and gave uniformity of 1.5–2.0 — much worse.
+    Arc length is distance along a curve; what the eye compares between two
+    touching tiles is the CHORD, and a hue-rotating path curves hard enough
+    through the a-b plane that equal arcs give badly unequal chords.
+
     Hue was added because the map is now shaded: relief + ambient occlusion
     swing lightness WITHIN one tile by a median of 2.44 adjacent ramp steps, so
     a ramp that varies only in lightness is partly drowned out by its own 3D.
@@ -76,8 +84,8 @@
   --serious: #ec835a;
   --critical: #d03b3b;
 
-  --size-0: #f5f5f2; --size-1: #eed59f; --size-2: #f0aa5c; --size-3: #e77e40;
-  --size-4: #d45441; --size-5: #b9284b; --size-6: #910056; --size-7: #630055;
+  --size-0: #f5f5f2; --size-1: #f3daa4; --size-2: #f7b163; --size-3: #ef8547;
+  --size-4: #da5a47; --size-5: #be2e50; --size-6: #950058; --size-7: #630055;
 
   --age-0: #9ce6ab; --age-1: #42bea4; --age-2: #008e97; --age-3: #005f7e; --age-4: #003167;
 
