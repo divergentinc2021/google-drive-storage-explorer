@@ -290,11 +290,27 @@ function tmSquarify(nodes, x, y, w, h) {
   carry the nesting. TM_RELIEF_S sets how pronounced that gradient is; it no
   longer trades away the data.
 */
-var TM_H0 = 0.55;            // ridge height at depth 1
-var TM_F = 0.78;             // per-level attenuation
-var TM_LX = 0.09759, TM_LY = -0.19518, TM_LZ = 0.9759;   // light, near-vertical
+var TM_H0 = 0.52;            // ridge height at depth 1
+var TM_F = 0.82;             // per-level attenuation — higher = softer nesting
+/*
+  Light comes from the LOWER-RIGHT: x and y are negated from the conventional
+  upper-left, which inverts which face of every cushion is lit.
+  Labels are anchored top-left, so they now sit on the SHADED corner rather than
+  the lit one. The sampled ink and the halo absorb that, but it is re-measured
+  rather than assumed.
+
+  The lateral tilt is much stronger than the textbook (0.098, -0.195, 0.976).
+  With a near-vertical light most of the intensity comes from the Z term, so the
+  lit and shaded faces barely differ — dropping the ridge height and relief
+  strength for softness left the directional signal so weak that top-left and
+  bottom-right measured 1.0673 against 1.0675, and inverting a gradient that is
+  not there does nothing visible. Tilting the light instead of raising the ridge
+  is what gives a clear lit side without making the cushions steep and blocky.
+  Unit length, near enough: 0.22² + 0.44² + 0.87² = 0.999.
+*/
+var TM_LX = -0.22, TM_LY = 0.44, TM_LZ = 0.87;
 var TM_IA = 0.45, TM_IS = 0.55;   // ambient / specular split
-var TM_RELIEF_S = 0.55;      // how much of the shaded result to keep
+var TM_RELIEF_S = 0.50;      // how much of the shaded result to keep
 
 /*
   Ambient occlusion, in two places, because a treemap has two kinds of surface.
@@ -314,17 +330,27 @@ var TM_RELIEF_S = 0.55;      // how much of the shaded result to keep
   The AO radius scales with the tile so the darkened FRACTION is constant; a
   fixed radius would again hit small tiles harder than large ones.
 */
-var TM_AO_S = 0.42;          // inside-tile occlusion strength
-var TM_AO_FRAC = 0.20;       // radius as a fraction of the tile's short side
-var TM_AO_MIN = 2, TM_AO_MAX = 11;
-var TM_CONTACT_BLUR = 7;     // gutter contact-shadow spread, px
-var TM_CONTACT_A = 0.34;     // gutter contact-shadow opacity
+var TM_AO_S = 0.33;          // inside-tile occlusion strength
+var TM_AO_FRAC = 0.13;       // radius as a fraction of the tile's short side
+var TM_AO_MIN = 1.5, TM_AO_MAX = 8;
+var TM_CONTACT_BLUR = 12;    // gutter contact-shadow spread, px
+var TM_CONTACT_A = 0.26;     // gutter contact-shadow opacity
 
-/** Smoothstep falloff from a wall. 0 at the wall, 1 by `r` px in. No exp(). */
+/**
+ * Falloff from a wall: 0 at the wall, 1 by `r` px in.
+ *
+ * Smootherstep (6t⁵−15t⁴+10t³), not smoothstep. Both are 0 and 1 at the ends
+ * with zero first derivative, but smootherstep also has zero SECOND derivative
+ * there, so the occlusion band has no perceptible edge where it stops. With
+ * smoothstep you could see the band terminate, which is most of what made the
+ * tiles read as blocks with a border rather than as softly lit surfaces.
+ */
+function tmSmooth(t) {
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
 function tmAoAt(dx, dy, r) {
   var tx = dx < r ? dx / r : 1, ty = dy < r ? dy / r : 1;
-  var sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
-  return 1 - TM_AO_S * (1 - sx * sy);
+  return 1 - TM_AO_S * (1 - tmSmooth(tx) * tmSmooth(ty));
 }
 /* Scratch columns for the shading pass, grown on demand and reused across
    tiles and frames — a fresh pair of arrays per tile per render is avoidable
@@ -406,8 +432,10 @@ function tmShadeRect(img, r) {
     TM_COL_NX[k] = nx * TM_LX;
     TM_COL_NX2[k] = nx * nx;
     var dxl = xc - r.x, dxr = rx1 - xc, dx = dxl < dxr ? dxl : dxr;
-    var tx = dx < aoR ? dx / aoR : 1;
-    TM_COL_AO[k] = tx * tx * (3 - 2 * tx);
+    // tmSmooth, not an inlined copy of it — this and the row term below must
+    // stay identical to the curve tmMeanIntensity integrates, or the unit-mean
+    // normalisation is computed against a surface that is not the one drawn.
+    TM_COL_AO[k] = tmSmooth(dx < aoR ? dx / aoR : 1);
   }
 
   for (var py = y0; py < y1; py++) {
@@ -415,8 +443,7 @@ function tmShadeRect(img, r) {
     var ny = -(2 * c.sy2 * yc + c.sy1);
     var nyL = ny * TM_LY + TM_LZ, ny2 = ny * ny + 1;
     var dyt = yc - r.y, dyb = ry1 - yc, dy = dyt < dyb ? dyt : dyb;
-    var ty = dy < aoR ? dy / aoR : 1;
-    var sy = ty * ty * (3 - 2 * ty);
+    var sy = tmSmooth(dy < aoR ? dy / aoR : 1);
     var row = (py * W + x0) * 4;
     for (var j = 0; j < n; j++) {
       var cosa = (TM_COL_NX[j] + nyL) / Math.sqrt(TM_COL_NX2[j] + ny2);
