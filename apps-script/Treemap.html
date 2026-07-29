@@ -330,11 +330,19 @@ var TM_RELIEF_S = 0.50;      // how much of the shaded result to keep
   The AO radius scales with the tile so the darkened FRACTION is constant; a
   fixed radius would again hit small tiles harder than large ones.
 */
-var TM_AO_S = 0.33;          // inside-tile occlusion strength
-var TM_AO_FRAC = 0.13;       // radius as a fraction of the tile's short side
-var TM_AO_MIN = 1.5, TM_AO_MAX = 8;
-var TM_CONTACT_BLUR = 12;    // gutter contact-shadow spread, px
-var TM_CONTACT_A = 0.26;     // gutter contact-shadow opacity
+var TM_AO_S = 0.29;          // inside-tile occlusion strength
+var TM_AO_FRAC = 0.09;       // radius as a fraction of the tile's short side
+/* TM_AO_MIN is a floor, not a preference. Below roughly 1.5 CSS px the band is
+   two device pixels at dpr 1, which cannot hold a smooth gradient and renders as
+   a hard dark rim — i.e. thinner past this point makes tiles look MORE blocky,
+   not less. If the band still reads as too heavy, lower TM_AO_S instead. */
+var TM_AO_MIN = 1.5, TM_AO_MAX = 6;
+var TM_CONTACT_BLUR = 16;    // gutter contact-shadow spread, px
+var TM_CONTACT_A = 0.21;     // gutter contact-shadow opacity
+/* Offset follows the light. It was (0, +1) — a shadow falling downward, which
+   implies light from above and directly contradicted inverting the light to the
+   lower-left. Shadows now fall up and to the right, away from it. */
+var TM_CONTACT_DX = 2, TM_CONTACT_DY = -2;
 
 /**
  * Falloff from a wall: 0 at the wall, 1 by `r` px in.
@@ -774,7 +782,8 @@ function tmRender() {
     TM_CTX.save();
     TM_CTX.shadowColor = 'rgba(0,0,0,' + TM_CONTACT_A + ')';
     TM_CTX.shadowBlur = TM_CONTACT_BLUR;
-    TM_CTX.shadowOffsetY = 1;
+    TM_CTX.shadowOffsetX = TM_CONTACT_DX;
+    TM_CTX.shadowOffsetY = TM_CONTACT_DY;
     TM_CTX.fillStyle = '#000';
     for (i = 0; i < TM_RECTS.length; i++) {
       r = TM_RECTS[i];
