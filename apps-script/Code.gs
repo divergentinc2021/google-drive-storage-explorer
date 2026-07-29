@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v7';
+var APP_VERSION = 'v8';
 var APP_UPDATED = '2026-07-29';
 
 // ─── capability flags ────────────────────────────────────────────────────────
