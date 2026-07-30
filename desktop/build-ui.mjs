@@ -71,9 +71,41 @@ if (DESKTOP) {
   */
   var pvLayout = document.createElement('style');
   pvLayout.textContent = [
-    '.viz-root { max-width: none !important; padding: 14px 18px 18px !important; }',
-    '.canvasbox { height: clamp(360px, calc(100vh - 430px), 1100px) !important; }',
-    '.list { max-height: clamp(220px, calc(100vh - 620px), 900px) !important; }',
+    /* The window IS the app. Web pages scroll; desktop tools do not. */
+    'html, body { height: 100%; overflow: hidden; }',
+    '.viz-root { max-width: none !important; height: 100vh; padding: 0 !important;',
+    '  display: flex; flex-direction: column; }',
+    '.topbar { margin: 0 !important; padding: 10px 16px; border-bottom: 1px solid var(--border); }',
+
+    /* One slim strip replaces the quota panel and the six stat tiles: the same
+       numbers in ~40px instead of ~250, which is where the map gets its height. */
+    '#deskStrip { padding: 7px 16px; border-bottom: 1px solid var(--border);',
+    '  font-size: 12px; color: var(--text-secondary); display: flex; gap: 18px;',
+    '  flex-wrap: wrap; align-items: baseline; }',
+    '#deskStrip b { color: var(--text-primary); font-variant-numeric: tabular-nums; }',
+    '#quotaPanel, #tiles { display: none !important; }',
+
+    /* Map left, lists right, both full height. min-height/min-width 0 on the flex
+       children is what stops a long list from forcing the whole column taller
+       than the window -- the default min-size of a flex item is its content. */
+    '#deskSplit { flex: 1; display: flex; min-height: 0; }',
+    '#deskMap { flex: 1; min-width: 0; display: flex; flex-direction: column;',
+    '  padding: 12px 0 6px 16px; }',
+    '#deskMap .panel { flex: 1; display: flex; flex-direction: column; margin: 0;',
+    '  min-height: 0; }',
+    '.canvasbox { height: auto !important; flex: 1; min-height: 0; }',
+    '#deskGrip { flex: 0 0 7px; cursor: col-resize; background: transparent;',
+    '  border-left: 1px solid var(--border); margin: 12px 0; }',
+    '#deskGrip:hover { background: var(--grid); }',
+    '#deskSide { flex: 0 0 auto; display: flex; flex-direction: column;',
+    '  padding: 12px 16px 10px 9px; min-height: 0; overflow: hidden; }',
+    '#deskSide .panel { flex: 1; display: flex; flex-direction: column; margin: 0;',
+    '  min-height: 0; }',
+    '#deskSide .list { max-height: none !important; flex: 1; min-height: 0; }',
+    '.seg.dtabs { margin: 0 0 10px !important; }',
+    /* No room for a footer in a fixed-height window, and its content is now in
+       the strip and the About-style version pill anyway. */
+    '.foot { display: none; }',
   ].join('\\n');
   document.head.appendChild(pvLayout);
 
@@ -179,65 +211,12 @@ if (DESKTOP) {
   if (pvQuota) pvQuota.querySelector('h2').textContent = 'Disk usage';
 
   /*
-    The quota meter and the stat tiles are written for Drive: trash that is still
-    billed, Gmail and Photos sharing the pool, shared drives on a separate one.
-    None of that exists on a volume, so both renderers are replaced rather than
-    patched — they are globals, and the house rule against IIFEs is what makes
-    that possible.
+    The quota panel and the stat tiles are Drive-shaped in ways CSS cannot hide —
+    trash that is still billed, Gmail and Photos sharing the pool, shared drives on
+    another. Both are hidden, and dsRenderQuota / dsRenderTiles are replaced further
+    down to write the one-line strip instead. They are globals, and the project's
+    rule against IIFEs is what makes replacing them possible.
   */
-  window.dsRenderQuota = function () {
-    if (!DS_BOOT) return;
-    var q = DS_BOOT.quota, capped = q.limit > 0;
-    var used = q.usage || 0, free = capped ? Math.max(0, q.limit - used) : 0;
-    var denom = capped ? q.limit : (used || 1);
-
-    document.getElementById('quotaHero').innerHTML = capped
-      ? dsEsc(tmFmtBytes(free)) + ' free <small>of ' + dsEsc(tmFmtBytes(q.limit)) +
-        ' · ' + (100 * used / q.limit).toFixed(1) + '% used</small>'
-      : '<small>Choose a folder to read the volume it sits on</small>';
-
-    var segs = [{ label: 'Used', v: used, c: 'var(--brand-strong)' }];
-    if (capped) segs.push({ label: 'Free', v: free, c: 'var(--grid)' });
-
-    document.getElementById('quotaMeter').innerHTML = segs
-      .filter(function (s) { return s.v > 0; })
-      .map(function (s) {
-        return '<i style="width:' + (100 * s.v / denom).toFixed(3) + '%;background:' + s.c +
-               '" title="' + dsEsc(s.label + ' — ' + tmFmtBytes(s.v)) + '"></i>';
-      }).join('');
-
-    document.getElementById('quotaLegend').innerHTML = '<div class="keys">' + segs.map(function (s) {
-      return '<span class="key"><i style="background:' + s.c + '"></i>' +
-             dsEsc(s.label) + ' · ' + dsEsc(tmFmtBytes(s.v)) + '</span>';
-    }).join('') + '</div>';
-
-    document.getElementById('quotaNote').innerHTML = capped
-      ? 'Whole-volume figures for the drive the scanned folder sits on, reported by ' +
-        'the filesystem. The scan below covers only the folder you chose, so its ' +
-        'total will usually be smaller than the used figure here.'
-      : '';
-  };
-
-  window.dsRenderTiles = function () {
-    if (!DS_BOOT) return;
-    var tiles = [];
-    if (DS_TREE) {
-      var s = dsSummary();
-      tiles.push(
-        { k: 'Scanned', v: tmFmtBytes(DS_TREE.bytes || 0),
-          n: 'total size of the chosen folder' },
-        { k: 'Idle > ' + dsDaysLabel(DS_DEAD_DAYS), v: tmFmtBytes(s.deadBytes),
-          n: s.deadFiles.toLocaleString() + ' files not modified since' },
-        { k: 'Indexed', v: s.fileTotal.toLocaleString() + ' files',
-          n: 'in ' + s.folderTotal.toLocaleString() + ' folders' });
-    } else {
-      tiles.push({ k: 'Nothing scanned yet', v: '—', n: 'choose a folder to begin' });
-    }
-    document.getElementById('tiles').innerHTML = tiles.map(function (t) {
-      return '<div class="tile"><div class="k">' + dsEsc(t.k) + '</div><div class="v">' +
-             dsEsc(t.v) + '</div><div class="n">' + dsEsc(t.n) + '</div></div>';
-    }).join('');
-  };
 
   /*
     Dashboard.html creates a synthetic '__root__' node named "My Drive" to hold
@@ -262,16 +241,81 @@ if (DESKTOP) {
   */
   var pvDead = document.querySelector('.panel:has(#deadList)');
   var pvType = document.querySelector('.panel:has(#typeList)');
-  if (pvDead && pvType) {
-    pvDead.parentNode.appendChild(pvType);          // same container, so tabs can swap them
+  var pvMapPanel = document.querySelector('.mapwrap');
+  if (pvDead && pvType && pvMapPanel) {
+    /* Build the split and move the real panels into it. */
+    var pvStrip = document.createElement('div');
+    pvStrip.id = 'deskStrip';
+    var pvSplit = document.createElement('div');
+    pvSplit.id = 'deskSplit';
+    var pvLeft = document.createElement('div');
+    pvLeft.id = 'deskMap';
+    var pvGrip = document.createElement('div');
+    pvGrip.id = 'deskGrip';
+    var pvSide = document.createElement('div');
+    pvSide.id = 'deskSide';
+
+    var pvRoot = document.getElementById('app');
+    pvRoot.insertBefore(pvStrip, pvMapPanel);
+    pvRoot.insertBefore(pvSplit, pvMapPanel);
+    pvSplit.appendChild(pvLeft);
+    pvSplit.appendChild(pvGrip);
+    pvSplit.appendChild(pvSide);
+    pvLeft.appendChild(pvMapPanel);
+
     var pvBar = document.createElement('div');
     pvBar.className = 'seg dtabs';
-    pvBar.style.margin = '0 0 12px';
     pvBar.innerHTML =
       '<button class="on" data-panel="dead">Dead folders</button>' +
-      '<button data-panel="type">Storage by file type</button>';
-    pvDead.parentNode.insertBefore(pvBar, pvDead);
+      '<button data-panel="type">File types</button>';
+    pvSide.appendChild(pvBar);
+    pvSide.appendChild(pvDead);
+    pvSide.appendChild(pvType);
     pvType.hidden = true;
+
+    /* Draggable divider, remembered between sessions. The treemap only redraws on
+       a window resize event, and dragging this fires none -- without the explicit
+       tmDraw the canvas would keep its old backing size and stretch. */
+    var pvW = Number(localStorage.getItem('deskSideW')) || 430;
+    var pvSetW = function (w) {
+      var max = Math.max(300, window.innerWidth - 420);
+      pvW = Math.min(max, Math.max(300, w));
+      pvSide.style.flexBasis = pvW + 'px';
+      if (typeof tmDraw === 'function' && typeof TM_ROOT !== 'undefined' && TM_ROOT) tmDraw();
+    };
+    pvSetW(pvW);
+    pvGrip.addEventListener('mousedown', function (ev) {
+      ev.preventDefault();
+      var move = function (e) { pvSetW(window.innerWidth - e.clientX - 8); };
+      var up = function () {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        localStorage.setItem('deskSideW', String(pvW));
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+
+    /* The strip carries what the quota panel and the tiles used to say. */
+    window.dsRenderTiles = function () {
+      if (!DS_BOOT) return;
+      var q = DS_BOOT.quota, bits = [];
+      var rs = window.desktop.getRoots();
+      bits.push('<b>' + dsEsc(rs.length === 1 ? rs[0] : rs.length + ' locations') + '</b>');
+      if (q.limit > 0) {
+        bits.push(dsEsc(tmFmtBytes(q.usage)) + ' of ' + dsEsc(tmFmtBytes(q.limit)) +
+                  ' used <b>(' + (100 * q.usage / q.limit).toFixed(0) + '%)</b>');
+      }
+      if (DS_TREE) {
+        var s = dsSummary();
+        bits.push('scanned <b>' + dsEsc(tmFmtBytes(DS_TREE.bytes || 0)) + '</b>');
+        bits.push('<b>' + s.fileTotal.toLocaleString() + '</b> files in <b>' +
+                  s.folderTotal.toLocaleString() + '</b> folders');
+        bits.push('<b>' + dsEsc(tmFmtBytes(s.deadBytes)) + '</b> idle > ' + dsDaysLabel(DS_DEAD_DAYS));
+      }
+      pvStrip.innerHTML = bits.join('<span style="opacity:.4">·</span>');
+    };
+    window.dsRenderQuota = function () { window.dsRenderTiles(); };
     pvBar.addEventListener('click', function (ev) {
       var b = ev.target.closest ? ev.target.closest('button[data-panel]') : null;
       if (!b) return;
