@@ -120,19 +120,50 @@ if (DESKTOP) {
   var pvDlg = document.createElement('dialog');
   pvDlg.id = 'volDlg';
   pvDlg.innerHTML =
-    '<div class="dlgbody">' +
-      '<h2 style="font-size:15px;margin:0 0 4px">What should I map?</h2>' +
-      '<p class="hint" style="margin:0 0 10px">Tick one or more. They are drawn side by ' +
-      'side in a single treemap, so you can compare them directly.</p>' +
-      '<div id="volList" class="list" style="max-height:320px"></div>' +
+    '<div class="dlgbody" style="margin-bottom:14px">' +
+      '<h2>What should I map?</h2>' +
+      '<p class="hint">Tick one or more. They are drawn side by side in a single ' +
+      'treemap, so you can compare them directly.</p>' +
+      '<div id="volList" class="vollist"></div>' +
       '<p class="hint" id="volWarn" style="margin:10px 0 0"></p>' +
     '</div>' +
-    '<form method="dialog" style="display:flex;gap:8px;justify-content:flex-end">' +
+    '<form method="dialog" class="volfoot">' +
       '<button class="btn ghost" id="volBrowse" value="browse">Choose a folder…</button>' +
+      '<span style="flex:1"></span>' +
       '<button class="btn ghost" value="cancel">Cancel</button>' +
       '<button class="btn primary" id="volGo" value="go">Scan</button>' +
     '</form>';
-  document.body.appendChild(pvDlg);
+
+  var pvDlgCss = document.createElement('style');
+  pvDlgCss.textContent =
+    '#volDlg { width: 560px; max-width: 92vw; }' +
+    '#volDlg h2 { font-size: 15px; margin: 0 0 3px; }' +
+    '#volDlg .hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 12px; }' +
+    '.vollist { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }' +
+    '.volrow { display: flex; align-items: center; gap: 11px; padding: 9px 11px;' +
+    '  border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }' +
+    '.volrow:hover { background: var(--plane); border-color: var(--baseline); }' +
+    '.volrow input { width: 16px; height: 16px; accent-color: var(--brand-strong); flex: none; }' +
+    '.volrow .nm { flex: 1; min-width: 0; }' +
+    '.volrow .nm b { font-size: 13px; }' +
+    '.volrow .nm small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }' +
+    /* A bar makes six volumes comparable at a glance in a way six percentages do not. */
+    '.volrow .gauge { flex: none; width: 92px; height: 6px; border-radius: 99px;' +
+    '  background: var(--grid); overflow: hidden; }' +
+    '.volrow .gauge i { display: block; height: 100%; background: var(--brand-strong); }' +
+    '.volrow .free { flex: none; width: 92px; text-align: right; font-size: 12px;' +
+    '  color: var(--text-secondary); font-variant-numeric: tabular-nums; }' +
+    '.volfoot { display: flex; gap: 8px; align-items: center; }';
+  document.head.appendChild(pvDlgCss);
+  /*
+    Appended INSIDE #app, not to <body>. Every design token in this project is
+    declared on .viz-root rather than on :root, so anything mounted outside it
+    resolves every var(--…) to nothing — each declaration using one is dropped and
+    the dialog renders as a bare white box with unstyled buttons. showModal() still
+    promotes it to the top layer, so it is unaffected by the flex/overflow layout
+    around it.
+  */
+  document.getElementById('app').appendChild(pvDlg);
 
   var pvExtra = [];   // folders added via the browse button
 
@@ -144,17 +175,19 @@ if (DESKTOP) {
     var rows = vols.map(function (v) {
       var used = v.total - v.free;
       var pct = v.total ? Math.round(100 * used / v.total) : 0;
-      return '<label class="row pick" style="cursor:pointer">' +
+      return '<label class="volrow">' +
         '<input type="checkbox" value="' + v.path.replace(/"/g, '&quot;') + '"' +
         (chosen.indexOf(v.path) >= 0 ? ' checked' : '') + '>' +
         '<span class="nm"><b>' + v.path + '</b><small>' + pvFmt(used) + ' of ' +
         pvFmt(v.total) + ' used · ' + pct + '%</small></span>' +
-        '<span class="sz">' + pvFmt(v.free) + ' free</span></label>';
+        '<span class="gauge"><i style="width:' + pct + '%"></i></span>' +
+        '<span class="free">' + pvFmt(v.free) + ' free</span></label>';
     });
     rows = rows.concat(pvExtra.map(function (p) {
-      return '<label class="row pick" style="cursor:pointer">' +
+      return '<label class="volrow">' +
         '<input type="checkbox" value="' + p.replace(/"/g, '&quot;') + '" checked>' +
-        '<span class="nm"><b>' + p + '</b><small>folder</small></span></label>';
+        '<span class="nm"><b>' + p + '</b><small>chosen folder</small></span>' +
+        '<span class="free">folder</span></label>';
     }));
     document.getElementById('volList').innerHTML = rows.join('') ||
       '<div class="empty-list">No volumes found.</div>';
@@ -225,6 +258,14 @@ if (DESKTOP) {
     label reads through it. Wrapping tmSetRoot catches both the initial draw and
     the zoom-out, and the id guard means zooming INTO a folder is untouched.
   */
+  /* The legend still offered to "open it in Drive". */
+  var pvLegend = window.tmLegendHtml;
+  window.tmLegendHtml = function () {
+    return pvLegend.apply(this, arguments)
+      .replace(/double-click to open it in Drive/g, 'double-click to reveal in File Explorer')
+      .replace(/double-click a tile to open it in Drive/g, 'double-click a tile to reveal it');
+  };
+
   var pvSetRoot = window.tmSetRoot;
   window.tmSetRoot = function (node) {
     if (node && node.id === '__root__') {
@@ -272,6 +313,22 @@ if (DESKTOP) {
     pvSide.appendChild(pvDead);
     pvSide.appendChild(pvType);
     pvType.hidden = true;
+
+    /* Drill-down for a selected file type, inside the File types panel. */
+    var pvDetail = document.createElement('div');
+    pvDetail.id = 'typeDetail';
+    pvDetail.hidden = true;
+    pvType.appendChild(pvDetail);
+    var pvTdCss = document.createElement('style');
+    pvTdCss.textContent =
+      '#typeDetail { display: flex; flex-direction: column; min-height: 0; flex: 1; }' +
+      '#typeDetail[hidden] { display: none; }' +
+      '#typeDetail .tdhead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap;' +
+      '  font-size: 12px; color: var(--text-secondary); margin: 0 0 8px; }' +
+      '#typeDetail .list { flex: 1; min-height: 0; }' +
+      '#typeList .row { cursor: pointer; }' +
+      '#typeList .row.on { background: rgba(255,210,63,.16); outline: 1px solid #ffd23f; }';
+    document.head.appendChild(pvTdCss);
 
     /* Draggable divider, remembered between sessions. The treemap only redraws on
        a window resize event, and dragging this fires none -- without the explicit
@@ -425,11 +482,141 @@ if (DESKTOP) {
     return doomed.length;
   };
 
+  /* ── pick a file type, see where it lives ───────────────────────────────── */
+  /*
+    Clicking a row in File types lights every tile on the map that holds that
+    type, and lists the folders holding it.
+
+    Only TERMINAL rects are outlined. Matching files are often deeper than the map
+    draws, or folded into a "small files" node, so the honest highlight is "the
+    drawn tile that contains this", not "the file itself" — which frequently is not
+    a tile at all. Ancestors get marked on the way up so a folder tile lights when
+    something inside it matches; filtering to terminal rects then collapses that
+    back to exactly what is on screen.
+  */
+  var pvType_sel = null, pvType_hit = null, pvType_raf = 0, pvType_t0 = 0;
+
+  function pvTypeMark(label) {
+    var hit = Object.create(null);
+    var files = [];
+    DS_ALL.forEach(function (n) {
+      if (n.kind === KIND_FOLDER || n.synthetic) return;
+      if (typeof dsTypeLabel !== 'function' || dsTypeLabel(n) !== label) return;
+      files.push(n);
+      hit[n.id] = 1;
+      var cur = DS_BYID[n.parent], guard = 0;
+      while (cur && guard++ < 300) { hit[cur.id] = 1; cur = DS_BYID[cur.parent]; }
+    });
+    return { hit: hit, files: files };
+  }
+
+  function pvTypeOverlay() {
+    if (!pvType_hit || typeof TM_RECTS === 'undefined' || !TM_CTX) return;
+    // Pulse between two alphas so the highlight reads as "selected" rather than
+    // as another data channel competing with the ramp.
+    var t = (Date.now() - pvType_t0) / 900;
+    var a = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
+    TM_CTX.save();
+    TM_CTX.lineJoin = 'round';
+    for (var i = 0; i < TM_RECTS.length; i++) {
+      var r = TM_RECTS[i];
+      if (r.depth === 0 || !r.terminal || !pvType_hit.hit[r.node.id]) continue;
+      if (r.w < 2 || r.h < 2) continue;
+      TM_CTX.globalAlpha = a;
+      TM_CTX.strokeStyle = '#ffd23f';
+      TM_CTX.lineWidth = 2.5;
+      TM_CTX.strokeRect(r.x + 1.25, r.y + 1.25, r.w - 2.5, r.h - 2.5);
+      TM_CTX.globalAlpha = a * 0.22;
+      TM_CTX.fillStyle = '#ffd23f';
+      TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+    }
+    TM_CTX.restore();
+  }
+
+  var pvBasePaint = window.tmPaint;
+  window.tmPaint = function () {
+    pvBasePaint.apply(this, arguments);
+    pvTypeOverlay();
+  };
+
+  function pvTypeLoop() {
+    if (!pvType_hit) { pvType_raf = 0; return; }
+    tmPaint();
+    pvType_raf = requestAnimationFrame(pvTypeLoop);
+  }
+
+  function pvTypeClear() {
+    pvType_sel = null; pvType_hit = null;
+    if (pvType_raf) { cancelAnimationFrame(pvType_raf); pvType_raf = 0; }
+    document.querySelectorAll('#typeList .row.on').forEach(function (e) { e.classList.remove('on'); });
+    var d = document.getElementById('typeDetail');
+    if (d) d.hidden = true;
+    document.getElementById('typeList').hidden = false;
+    if (typeof TM_ROOT !== 'undefined' && TM_ROOT) tmPaint();
+  }
+
+  function pvTypeSelect(label, rowEl) {
+    if (pvType_sel === label) { pvTypeClear(); return; }
+    pvTypeClear();
+    pvType_sel = label;
+    pvType_hit = pvTypeMark(label);
+    pvType_t0 = Date.now();
+    if (rowEl) rowEl.classList.add('on');
+
+    // Folders holding this type, biggest first.
+    var byFolder = Object.create(null);
+    pvType_hit.files.forEach(function (n) {
+      var p = DS_BYID[n.parent];
+      if (!p) return;
+      if (!byFolder[p.id]) byFolder[p.id] = { node: p, bytes: 0, count: 0 };
+      byFolder[p.id].bytes += n.bytes; byFolder[p.id].count++;
+    });
+    var folders = Object.keys(byFolder).map(function (k) { return byFolder[k]; })
+      .sort(function (a, b) { return b.bytes - a.bytes; });
+
+    var d = document.getElementById('typeDetail');
+    var total = pvType_hit.files.reduce(function (a, n) { return a + n.bytes; }, 0);
+    d.innerHTML =
+      '<div class="tdhead">' +
+        '<button class="btn sm ghost" id="typeBack">← All types</button>' +
+        '<span><b>' + dsEsc(label) + '</b> · ' + dsEsc(tmFmtBytes(total)) + ' in ' +
+        pvType_hit.files.length.toLocaleString() + ' files · ' +
+        folders.length.toLocaleString() + ' folders</span>' +
+      '</div>' +
+      '<div class="list">' + (folders.length ? folders.slice(0, 300).map(function (f) {
+        return '<div class="row pick" data-id="' + dsEsc(f.node.id) + '">' +
+          '<span class="nm">' + dsEsc(f.node.name) +
+          '<small>' + dsEsc(dsPath(f.node)) + '</small></span>' +
+          '<span class="sz">' + dsEsc(tmFmtBytes(f.bytes)) + '</span>' +
+          '<span class="ag">' + f.count.toLocaleString() + '</span></div>';
+      }).join('') : '<div class="empty-list">Nothing of this type.</div>') + '</div>';
+    d.hidden = false;
+    document.getElementById('typeList').hidden = true;
+    pvTypeLoop();
+  }
+
+  document.addEventListener('click', function (ev) {
+    if (!ev.target.closest) return;
+    if (ev.target.closest('#typeBack')) { pvTypeClear(); return; }
+    var det = ev.target.closest('#typeDetail .row[data-id]');
+    if (det) {
+      var n = DS_BYID[det.dataset.id];
+      if (n && typeof dsZoomTo === 'function') dsZoomTo(n);
+      return;
+    }
+    var row = ev.target.closest('#typeList .row');
+    if (!row) return;
+    var lab = row.querySelector('.ext');
+    if (lab) pvTypeSelect(lab.textContent.trim(), row);
+  });
+
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && pvType_sel) pvTypeClear(); });
+
   /* ── right-click a tile ─────────────────────────────────────────────────── */
   var pvMenu = document.createElement('div');
   pvMenu.id = 'deskMenu';
   pvMenu.hidden = true;
-  document.body.appendChild(pvMenu);
+  document.getElementById('app').appendChild(pvMenu);   // tokens live on .viz-root
 
   var pvMenuCss = document.createElement('style');
   pvMenuCss.textContent =
