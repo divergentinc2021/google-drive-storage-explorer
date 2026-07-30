@@ -12,6 +12,7 @@ files:
   - main.cjs
   - preload.cjs
   - scan.mjs
+  - protect.mjs
   - ui/**/*
   - package.json
 

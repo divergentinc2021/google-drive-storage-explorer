@@ -62,5 +62,7 @@ contextBridge.exposeInMainWorld('desktop', {
   getRoot: () => ROOTS[0] || null,
   reveal: (p) => ipcRenderer.invoke('revealItem', p),
   confirmDelete: (info) => ipcRenderer.invoke('confirmDelete', info),
+  classifyPath: (p) => ipcRenderer.invoke('classifyPath', p),
+  openAppsSettings: () => ipcRenderer.invoke('openAppsSettings'),
   writeClipboard: (text) => ipcRenderer.invoke('writeClipboard', text),
 });

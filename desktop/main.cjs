@@ -218,13 +218,38 @@ ipcMain.handle('buildManifestCsv', async (_e, rows) => {
  * no reason to be less careful on a local disk, so there is deliberately no
  * fs.unlink path anywhere in this app.
  */
+ipcMain.handle('classifyPath', async (_e, p) => {
+  const { classifyPath } = await import('./protect.mjs');
+  return classifyPath(p, { home: app.getPath('home') });
+});
+
+ipcMain.handle('openAppsSettings', async () => {
+  // Windows 10/11 Settings deep link; appwiz.cpl is the fallback for anything
+  // that does not understand ms-settings.
+  try { await shell.openExternal('ms-settings:appsfeatures'); return true; }
+  catch {
+    try { await shell.openPath('appwiz.cpl'); return true; } catch { return false; }
+  }
+});
+
 ipcMain.handle('trashFiles', async (_e, ids) => {
-  const trashed = [], failed = [];
+  const { classifyPath } = await import('./protect.mjs');
+  const trashed = [], failed = [], skipped = [];
   for (const p of ids || []) {
+    /*
+      Enforced HERE, not only in the renderer. The UI's job is to explain why
+      something is refused; the guarantee has to live where the deletion actually
+      happens, or a bug in the front end is enough to bin C:\Windows.
+    */
+    const c = classifyPath(p, { home: app.getPath('home') });
+    if (c.level !== 'ok') {
+      skipped.push({ id: p, level: c.level, why: c.why });
+      continue;
+    }
     try { await shell.trashItem(p); trashed.push(p); }
     catch (err) { failed.push({ id: p, error: err.message }); }
   }
-  return { trashed, failed, skipped: [], gated: false };
+  return { trashed, failed, skipped, gated: false };
 });
 
 /**

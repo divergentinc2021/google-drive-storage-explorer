@@ -612,6 +612,53 @@ if (DESKTOP) {
 
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && pvType_sel) pvTypeClear(); });
 
+  /* ── notice dialog ──────────────────────────────────────────────────────── */
+  /*
+    Used for "cannot delete this" and "uninstall this instead". Its own dialog
+    rather than showMessageBox: these are informational, they need an action
+    button that opens Windows Settings, and they close with an X — a native
+    message box gives none of that.
+  */
+  var pvNoticeDlg = document.createElement('dialog');
+  pvNoticeDlg.id = 'noticeDlg';
+  document.getElementById('app').appendChild(pvNoticeDlg);
+
+  var pvNoticeCss = document.createElement('style');
+  pvNoticeCss.textContent =
+    '#noticeDlg { width: 460px; max-width: 92vw; }' +
+    '#noticeDlg .nhead { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; }' +
+    '#noticeDlg h2 { font-size: 15px; margin: 0; flex: 1; }' +
+    '#noticeDlg .nx { border: 0; background: none; cursor: pointer; color: var(--muted);' +
+    '  font-size: 18px; line-height: 1; padding: 0 2px; }' +
+    '#noticeDlg .nx:hover { color: var(--text-primary); }' +
+    '#noticeDlg p { font-size: 13px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.55; }' +
+    '#noticeDlg .npath { font-family: ui-monospace, Consolas, monospace; font-size: 11px;' +
+    '  color: var(--muted); word-break: break-all; margin: 0 0 12px; }' +
+    '#noticeDlg .nfoot { display: flex; gap: 8px; justify-content: flex-end; }';
+  document.head.appendChild(pvNoticeCss);
+
+  function pvNotice(title, body, action) {
+    pvNoticeDlg.innerHTML =
+      '<div class="dlgbody">' +
+        '<div class="nhead"><h2>' + dsEsc(title) + '</h2>' +
+        '<button class="nx" data-x="1" title="Close" aria-label="Close">✕</button></div>' +
+        '<p>' + body + '</p>' +
+      '</div>' +
+      '<div class="nfoot">' +
+        (action ? '<button class="btn primary" data-act="' + action.act + '">' +
+          dsEsc(action.label) + '</button>' : '') +
+        '<button class="btn ghost" data-x="1">Close</button>' +
+      '</div>';
+    pvNoticeDlg.showModal();
+  }
+
+  pvNoticeDlg.addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('button') : null;
+    if (!b) return;
+    if (b.dataset.act === 'apps') window.desktop.openAppsSettings();
+    pvNoticeDlg.close();
+  });
+
   /* ── right-click a tile ─────────────────────────────────────────────────── */
   var pvMenu = document.createElement('div');
   pvMenu.id = 'deskMenu';
@@ -669,6 +716,28 @@ if (DESKTOP) {
     if (act === 'reveal') { window.desktop.reveal(n.id); return; }
     if (act === 'copy') { window.desktop.writeClipboard(n.id); return; }
     if (act !== 'trash') return;
+
+    /*
+      Check before offering the confirm, so a protected path never even reaches a
+      "Move to Recycle Bin?" prompt — being asked and then refused is worse than
+      not being asked. Main refuses these independently; this is the explanation,
+      not the guard.
+    */
+    var cls = await window.desktop.classifyPath(n.id);
+    if (cls.level === 'system') {
+      pvNotice('Windows system files cannot be deleted',
+        dsEsc(cls.why) + ' Removing it would stop Windows working properly, so ' +
+        'this app will not touch it.', null);
+      return;
+    }
+    if (cls.level === 'software') {
+      pvNotice('This looks like installed software',
+        'Deleting the folder leaves the program half-removed and still registered ' +
+        'as installed. Uninstall it properly instead — that clears its files, its ' +
+        'registry entries and its entry in the apps list.',
+        { label: 'Open Add or remove programs', act: 'apps' });
+      return;
+    }
 
     var ok = await window.desktop.confirmDelete({
       name: n.name, bytes: n.bytes, isFolder: n.kind === 0, fileCount: n.fileCount || 0,
