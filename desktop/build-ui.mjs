@@ -72,11 +72,125 @@ if (DESKTOP) {
     ev.stopImmediatePropagation();
     ev.preventDefault();
     var picked = await window.desktop.pickRoot();
-    if (picked) { pvBtn.textContent = 'Scan ' + picked; pvBtn.click(); }
+    if (!picked) return;
+    pvBtn.textContent = 'Scan ' + picked;
+    /* Re-boot now that there is a root: getBootstrap reads the volume with
+       statfs, and until a folder is chosen it has nothing to read, which is why
+       Disk usage sat at "0 B used" for the whole first scan. */
+    google.script.run.withSuccessHandler(dsOnBoot).getBootstrap();
+    pvBtn.click();
   }, true);
 
   var pvQuota = document.getElementById('quotaPanel');
   if (pvQuota) pvQuota.querySelector('h2').textContent = 'Disk usage';
+
+  /*
+    The quota meter and the stat tiles are written for Drive: trash that is still
+    billed, Gmail and Photos sharing the pool, shared drives on a separate one.
+    None of that exists on a volume, so both renderers are replaced rather than
+    patched — they are globals, and the house rule against IIFEs is what makes
+    that possible.
+  */
+  window.dsRenderQuota = function () {
+    if (!DS_BOOT) return;
+    var q = DS_BOOT.quota, capped = q.limit > 0;
+    var used = q.usage || 0, free = capped ? Math.max(0, q.limit - used) : 0;
+    var denom = capped ? q.limit : (used || 1);
+
+    document.getElementById('quotaHero').innerHTML = capped
+      ? dsEsc(tmFmtBytes(free)) + ' free <small>of ' + dsEsc(tmFmtBytes(q.limit)) +
+        ' · ' + (100 * used / q.limit).toFixed(1) + '% used</small>'
+      : '<small>Choose a folder to read the volume it sits on</small>';
+
+    var segs = [{ label: 'Used', v: used, c: 'var(--brand-strong)' }];
+    if (capped) segs.push({ label: 'Free', v: free, c: 'var(--grid)' });
+
+    document.getElementById('quotaMeter').innerHTML = segs
+      .filter(function (s) { return s.v > 0; })
+      .map(function (s) {
+        return '<i style="width:' + (100 * s.v / denom).toFixed(3) + '%;background:' + s.c +
+               '" title="' + dsEsc(s.label + ' — ' + tmFmtBytes(s.v)) + '"></i>';
+      }).join('');
+
+    document.getElementById('quotaLegend').innerHTML = '<div class="keys">' + segs.map(function (s) {
+      return '<span class="key"><i style="background:' + s.c + '"></i>' +
+             dsEsc(s.label) + ' · ' + dsEsc(tmFmtBytes(s.v)) + '</span>';
+    }).join('') + '</div>';
+
+    document.getElementById('quotaNote').innerHTML = capped
+      ? 'Whole-volume figures for the drive the scanned folder sits on, reported by ' +
+        'the filesystem. The scan below covers only the folder you chose, so its ' +
+        'total will usually be smaller than the used figure here.'
+      : '';
+  };
+
+  window.dsRenderTiles = function () {
+    if (!DS_BOOT) return;
+    var tiles = [];
+    if (DS_TREE) {
+      var s = dsSummary();
+      tiles.push(
+        { k: 'Scanned', v: tmFmtBytes(DS_TREE.bytes || 0),
+          n: 'total size of the chosen folder' },
+        { k: 'Idle > ' + dsDaysLabel(DS_DEAD_DAYS), v: tmFmtBytes(s.deadBytes),
+          n: s.deadFiles.toLocaleString() + ' files not modified since' },
+        { k: 'Indexed', v: s.fileTotal.toLocaleString() + ' files',
+          n: 'in ' + s.folderTotal.toLocaleString() + ' folders' });
+    } else {
+      tiles.push({ k: 'Nothing scanned yet', v: '—', n: 'choose a folder to begin' });
+    }
+    document.getElementById('tiles').innerHTML = tiles.map(function (t) {
+      return '<div class="tile"><div class="k">' + dsEsc(t.k) + '</div><div class="v">' +
+             dsEsc(t.v) + '</div><div class="n">' + dsEsc(t.n) + '</div></div>';
+    }).join('');
+  };
+
+  /*
+    Dashboard.html creates a synthetic '__root__' node named "My Drive" to hold
+    whatever the scan produced, so the breadcrumb and the outermost treemap tile
+    both said "My Drive" over a scan of D:\. Renaming the node is enough — every
+    label reads through it. Wrapping tmSetRoot catches both the initial draw and
+    the zoom-out, and the id guard means zooming INTO a folder is untouched.
+  */
+  var pvSetRoot = window.tmSetRoot;
+  window.tmSetRoot = function (node) {
+    if (node && node.id === '__root__') node.name = window.desktop.getRoot() || 'Scanned';
+    return pvSetRoot.apply(this, arguments);
+  };
+
+  /*
+    Dead folders and Storage by file type become tabs. Both are long scrolling
+    lists that answer different questions, and stacked they pushed the treemap —
+    the thing you actually came for — off the top of the window.
+  */
+  var pvDead = document.querySelector('.panel:has(#deadList)');
+  var pvType = document.querySelector('.panel:has(#typeList)');
+  if (pvDead && pvType) {
+    pvDead.parentNode.appendChild(pvType);          // same container, so tabs can swap them
+    var pvBar = document.createElement('div');
+    pvBar.className = 'seg dtabs';
+    pvBar.style.margin = '0 0 12px';
+    pvBar.innerHTML =
+      '<button class="on" data-panel="dead">Dead folders</button>' +
+      '<button data-panel="type">Storage by file type</button>';
+    pvDead.parentNode.insertBefore(pvBar, pvDead);
+    pvType.hidden = true;
+    pvBar.addEventListener('click', function (ev) {
+      var b = ev.target.closest ? ev.target.closest('button[data-panel]') : null;
+      if (!b) return;
+      pvBar.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      var dead = b.dataset.panel === 'dead';
+      pvDead.hidden = !dead;
+      pvType.hidden = dead;
+    });
+    /* The tab label already names each panel; its own h2 would just repeat it. */
+    var pvHide = document.createElement('style');
+    pvHide.textContent =
+      '.panel:has(#deadList) > .panelhead > h2, .panel:has(#typeList) > .panelhead > h2 { display: none; }' +
+      '.panel:has(#typeList) > .panelhead { min-height: 0; }';
+    document.head.appendChild(pvHide);
+  }
 
   /*
     Everything about MOVING files is removed here. This build is for looking at
