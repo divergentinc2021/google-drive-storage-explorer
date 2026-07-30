@@ -67,6 +67,12 @@
 
   <section class="tiles" id="tiles"></section>
 
+  <!--
+    Map and its side panel sit in one row. The panels below used to stack under
+    the map, which meant reading a row and looking at the map were never
+    possible at once — the pairing is the whole point of both.
+  -->
+  <section class="workspace">
   <section class="panel mapwrap">
     <div class="panelhead">
       <div class="crumbs" id="crumbs"></div>
@@ -83,61 +89,75 @@
     <div class="canvasbox">
       <canvas id="map"></canvas>
       <div class="tip" id="tip" hidden></div>
+      <div class="selbar" id="selBar" hidden></div>
       <div class="empty" id="mapEmpty">Run a scan to map where the storage mass sits.</div>
     </div>
     <div class="legend" id="legend"></div>
   </section>
 
-  <section class="cols stacked">
-    <div class="panel">
-      <div class="panelhead">
-        <h2>Dead folders <span class="count" id="deadCount"></span></h2>
-        <label class="field inline">
-          <span>Inactive for</span>
-          <select id="deadAfter">
-            <option value="90">3 months</option>
-            <option value="180">6 months</option>
-            <option value="365" selected>1 year</option>
-            <option value="730">2 years</option>
-          </select>
-        </label>
-      </div>
-      <p class="hint">Folders whose every file is past the threshold. Safe to move to the NAS and clear.</p>
-      <div class="list" id="deadList"></div>
-    </div>
+  <aside class="sidepanel">
+    <!--
+      Vertical rail, not a strip of tabs across the top: the panel is tall and
+      narrow, so horizontal tabs would either truncate their labels or steal the
+      width the lists need.
+    -->
+    <nav class="siderail" role="tablist" aria-label="Detail panels">
+      <button class="on" role="tab" aria-selected="true" data-tab="tabDead">
+        <span class="ic" aria-hidden="true">⌛</span><span class="tl">Dead<br>folders</span></button>
+      <button role="tab" aria-selected="false" data-tab="tabTypes">
+        <span class="ic" aria-hidden="true">◲</span><span class="tl">File<br>types</span></button>
+      <button role="tab" aria-selected="false" data-tab="tabClasses">
+        <span class="ic" aria-hidden="true">⇄</span><span class="tl">Migration<br>classes</span></button>
+      <button role="tab" aria-selected="false" data-tab="tabDrives">
+        <span class="ic" aria-hidden="true">☁</span><span class="tl">Shared<br>drives</span></button>
+    </nav>
 
-    <div class="panel">
-      <div class="panelhead">
-        <h2>Migration classes</h2>
+    <div class="sidebody">
+      <div class="tabpane" id="tabDead" role="tabpanel">
+        <div class="panelhead">
+          <h2>Dead folders <span class="count" id="deadCount"></span></h2>
+          <label class="field inline">
+            <span>Inactive for</span>
+            <select id="deadAfter">
+              <option value="90">3 months</option>
+              <option value="180">6 months</option>
+              <option value="365" selected>1 year</option>
+              <option value="730">2 years</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint">Folders whose every file is past the threshold. Click one to find it on the map.</p>
+        <div class="list" id="deadList"></div>
       </div>
-      <p class="hint">
-        Google-native files use <b>~0 storage quota</b> — deleting them frees nothing.
-        They are an <i>export</i> job, not a space job.
-      </p>
-      <div class="list" id="classList"></div>
-    </div>
-  </section>
 
-  <section class="cols">
-    <div class="panel">
-      <div class="panelhead">
-        <h2>Storage by file type</h2>
+      <div class="tabpane" id="tabTypes" role="tabpanel" hidden>
+        <div class="panelhead"><h2>Storage by file type</h2></div>
+        <p class="hint">What the mass is made of. Click a type to light every tile holding it.</p>
+        <div class="list" id="typeList"></div>
       </div>
-      <p class="hint">What the mass is actually made of, across the scanned scope.</p>
-      <div class="list" id="typeList"></div>
-    </div>
 
-    <div class="panel">
-      <div class="panelhead">
-        <h2>Shared drives <span class="count" id="driveCount"></span></h2>
-        <button class="btn ghost sm" id="btnMeasure">Measure all</button>
+      <div class="tabpane" id="tabClasses" role="tabpanel" hidden>
+        <div class="panelhead"><h2>Migration classes</h2></div>
+        <p class="hint">
+          Google-native files use <b>~0 storage quota</b> — deleting them frees nothing.
+          They are an <i>export</i> job, not a space job.
+        </p>
+        <div class="list" id="classList"></div>
       </div>
-      <p class="hint">
-        Shared-drive content bills to the drive's own pool, <b>not</b> your personal
-        quota — so these totals are separate and never added to the figures above.
-      </p>
-      <div class="list" id="driveList"></div>
+
+      <div class="tabpane" id="tabDrives" role="tabpanel" hidden>
+        <div class="panelhead">
+          <h2>Shared drives <span class="count" id="driveCount"></span></h2>
+          <button class="btn ghost sm" id="btnMeasure">Measure all</button>
+        </div>
+        <p class="hint">
+          Shared-drive content bills to the drive's own pool, <b>not</b> your personal
+          quota — so these totals are separate and never added to the figures above.
+        </p>
+        <div class="list" id="driveList"></div>
+      </div>
     </div>
+  </aside>
   </section>
 
   <section class="panel">

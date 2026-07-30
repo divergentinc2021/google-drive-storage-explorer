@@ -85,24 +85,21 @@ if (DESKTOP) {
     '#deskStrip b { color: var(--text-primary); font-variant-numeric: tabular-nums; }',
     '#quotaPanel, #tiles { display: none !important; }',
 
-    /* Map left, lists right, both full height. min-height/min-width 0 on the flex
-       children is what stops a long list from forcing the whole column taller
-       than the window -- the default min-size of a flex item is its content. */
-    '#deskSplit { flex: 1; display: flex; min-height: 0; }',
-    '#deskMap { flex: 1; min-width: 0; display: flex; flex-direction: column;',
-    '  padding: 12px 0 6px 16px; }',
-    '#deskMap .panel { flex: 1; display: flex; flex-direction: column; margin: 0;',
+    /* The shared .workspace grid becomes a full-height split with a drag grip in
+       the middle column. min-height/min-width 0 on the grid children is what
+       stops a long list from forcing the column taller than the window -- the
+       default min-size of a grid item is its content. */
+    '#deskSplit { flex: 1; min-height: 0; align-items: stretch !important;',
+    '  gap: 0 !important; padding: 12px 16px 10px; }',
+    '#deskSplit > .mapwrap { min-width: 0; display: flex; flex-direction: column;',
     '  min-height: 0; }',
     '.canvasbox { height: auto !important; flex: 1; min-height: 0; }',
-    '#deskGrip { flex: 0 0 7px; cursor: col-resize; background: transparent;',
-    '  border-left: 1px solid var(--border); margin: 12px 0; }',
+    '#deskGrip { cursor: col-resize; background: transparent;',
+    '  border-left: 1px solid var(--border); margin: 0 0 0 8px; }',
     '#deskGrip:hover { background: var(--grid); }',
-    '#deskSide { flex: 0 0 auto; display: flex; flex-direction: column;',
-    '  padding: 12px 16px 10px 9px; min-height: 0; overflow: hidden; }',
-    '#deskSide .panel { flex: 1; display: flex; flex-direction: column; margin: 0;',
-    '  min-height: 0; }',
-    '#deskSide .list { max-height: none !important; flex: 1; min-height: 0; }',
-    '.seg.dtabs { margin: 0 0 10px !important; }',
+    /* The panel supplies its own height for the web page; here the split does. */
+    '#deskSplit > .sidepanel { height: auto !important; min-height: 0; margin-left: 9px; }',
+    '.tabpane .list { max-height: none !important; }',
     /* No room for a footer in a fixed-height window, and its content is now in
        the strip and the About-style version pill anyway. */
     '.foot { display: none; }',
@@ -116,6 +113,10 @@ if (DESKTOP) {
   */
   var pvBtn = document.getElementById('btnScan');
   pvBtn.textContent = 'Choose what to scan';
+
+  /* This build asks about disks, so Dashboard.html must not also open its
+     Drive-scope picker — two startup dialogs stacked on each other. */
+  window.DS_SKIP_PICKER = true;
 
   var pvDlg = document.createElement('dialog');
   pvDlg.id = 'volDlg';
@@ -276,59 +277,22 @@ if (DESKTOP) {
   };
 
   /*
-    Dead folders and Storage by file type become tabs. Both are long scrolling
-    lists that answer different questions, and stacked they pushed the treemap —
-    the thing you actually came for — off the top of the window.
+    The side tabs now come from apps-script/Index.html — Dead folders, File
+    types, Migration classes, Shared drives — so this build no longer constructs
+    its own tab bar out of the panels. What is left here is the part that really
+    is desktop-only: making the workspace fill the window, and a draggable grip.
   */
-  var pvDead = document.querySelector('.panel:has(#deadList)');
-  var pvType = document.querySelector('.panel:has(#typeList)');
-  var pvMapPanel = document.querySelector('.mapwrap');
-  if (pvDead && pvType && pvMapPanel) {
-    /* Build the split and move the real panels into it. */
+  var pvWork = document.querySelector('.workspace');
+  var pvSide = document.querySelector('.sidepanel');
+  if (pvWork && pvSide) {
     var pvStrip = document.createElement('div');
     pvStrip.id = 'deskStrip';
-    var pvSplit = document.createElement('div');
-    pvSplit.id = 'deskSplit';
-    var pvLeft = document.createElement('div');
-    pvLeft.id = 'deskMap';
+    document.getElementById('app').insertBefore(pvStrip, pvWork);
+    pvWork.id = 'deskSplit';
+
     var pvGrip = document.createElement('div');
     pvGrip.id = 'deskGrip';
-    var pvSide = document.createElement('div');
-    pvSide.id = 'deskSide';
-
-    var pvRoot = document.getElementById('app');
-    pvRoot.insertBefore(pvStrip, pvMapPanel);
-    pvRoot.insertBefore(pvSplit, pvMapPanel);
-    pvSplit.appendChild(pvLeft);
-    pvSplit.appendChild(pvGrip);
-    pvSplit.appendChild(pvSide);
-    pvLeft.appendChild(pvMapPanel);
-
-    var pvBar = document.createElement('div');
-    pvBar.className = 'seg dtabs';
-    pvBar.innerHTML =
-      '<button class="on" data-panel="dead">Dead folders</button>' +
-      '<button data-panel="type">File types</button>';
-    pvSide.appendChild(pvBar);
-    pvSide.appendChild(pvDead);
-    pvSide.appendChild(pvType);
-    pvType.hidden = true;
-
-    /* Drill-down for a selected file type, inside the File types panel. */
-    var pvDetail = document.createElement('div');
-    pvDetail.id = 'typeDetail';
-    pvDetail.hidden = true;
-    pvType.appendChild(pvDetail);
-    var pvTdCss = document.createElement('style');
-    pvTdCss.textContent =
-      '#typeDetail { display: flex; flex-direction: column; min-height: 0; flex: 1; }' +
-      '#typeDetail[hidden] { display: none; }' +
-      '#typeDetail .tdhead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap;' +
-      '  font-size: 12px; color: var(--text-secondary); margin: 0 0 8px; }' +
-      '#typeDetail .list { flex: 1; min-height: 0; }' +
-      '#typeList .row { cursor: pointer; }' +
-      '#typeList .row.on { background: rgba(255,210,63,.16); outline: 1px solid #ffd23f; }';
-    document.head.appendChild(pvTdCss);
+    pvWork.insertBefore(pvGrip, pvSide);
 
     /* Draggable divider, remembered between sessions. The treemap only redraws on
        a window resize event, and dragging this fires none -- without the explicit
@@ -337,7 +301,7 @@ if (DESKTOP) {
     var pvSetW = function (w) {
       var max = Math.max(300, window.innerWidth - 420);
       pvW = Math.min(max, Math.max(300, w));
-      pvSide.style.flexBasis = pvW + 'px';
+      pvWork.style.gridTemplateColumns = 'minmax(0,1fr) 6px ' + pvW + 'px';
       if (typeof tmDraw === 'function' && typeof TM_ROOT !== 'undefined' && TM_ROOT) tmDraw();
     };
     pvSetW(pvW);
@@ -373,21 +337,6 @@ if (DESKTOP) {
       pvStrip.innerHTML = bits.join('<span style="opacity:.4">·</span>');
     };
     window.dsRenderQuota = function () { window.dsRenderTiles(); };
-    pvBar.addEventListener('click', function (ev) {
-      var b = ev.target.closest ? ev.target.closest('button[data-panel]') : null;
-      if (!b) return;
-      pvBar.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
-      b.classList.add('on');
-      var dead = b.dataset.panel === 'dead';
-      pvDead.hidden = !dead;
-      pvType.hidden = dead;
-    });
-    /* The tab label already names each panel; its own h2 would just repeat it. */
-    var pvHide = document.createElement('style');
-    pvHide.textContent =
-      '.panel:has(#deadList) > .panelhead > h2, .panel:has(#typeList) > .panelhead > h2 { display: none; }' +
-      '.panel:has(#typeList) > .panelhead { min-height: 0; }';
-    document.head.appendChild(pvHide);
   }
 
   /*
@@ -405,17 +354,18 @@ if (DESKTOP) {
   var pvCss = document.createElement('style');
   pvCss.textContent = [
     /* migration classes, shared drives, and the whole reclaim/trash panel */
-    '.panel:has(#classList), .panel:has(#driveList), .panel:has(#bigList) { display: none !important; }',
+    '#tabClasses, #tabDrives, .siderail button[data-tab="tabClasses"], .siderail button[data-tab="tabDrives"],' +
+    '.panel:has(#bigList) { display: none !important; }',
     /* the Storage Mapper hand-off, and the Drive-scope picker */
     '.note.tool, label.field:has(#scope) { display: none !important; }',
     /* "move" pills on dead folders — this build proposes nothing */
-    '.panel:has(#deadList) .pill { display: none !important; }',
+    '#tabDead .pill { display: none !important; }',
     /* one panel per row now that half of them are gone */
-    '.cols { grid-template-columns: 1fr !important; }',
+    
   ].join('\\n');
   document.head.appendChild(pvCss);
 
-  var pvHint = document.querySelector('.panel:has(#deadList) .hint');
+  var pvHint = document.querySelector('#tabDead .hint');
   if (pvHint) {
     pvHint.textContent = 'Folders where nothing has been modified since the threshold. ' +
       'Usually the best place to start clearing space.';
@@ -436,21 +386,6 @@ if (DESKTOP) {
     var p = a.getAttribute('href');
     if (p && p !== '#') window.desktop.reveal(p);
   }, true);
-
-  /*
-    Click a dead folder, the map zooms to it.
-    This is the pairing the side-by-side layout exists for and a third tab would
-    have ruled out: you read a row on the right and immediately see where that
-    weight sits on the left.
-  */
-  document.addEventListener('click', function (ev) {
-    var row = ev.target && ev.target.closest ? ev.target.closest('#deadList .row') : null;
-    if (!row) return;
-    var a = row.querySelector('a.open');
-    var id = a && a.getAttribute('href');
-    var node = id && DS_BYID ? DS_BYID[id] : null;
-    if (node && typeof dsZoomTo === 'function') dsZoomTo(node);
-  });
 
   /**
    * Drop a trashed node and everything under it, then rebuild.
@@ -482,135 +417,12 @@ if (DESKTOP) {
     return doomed.length;
   };
 
-  /* ── pick a file type, see where it lives ───────────────────────────────── */
   /*
-    Clicking a row in File types lights every tile on the map that holds that
-    type, and lists the folders holding it.
-
-    Only TERMINAL rects are outlined. Matching files are often deeper than the map
-    draws, or folded into a "small files" node, so the honest highlight is "the
-    drawn tile that contains this", not "the file itself" — which frequently is not
-    a tile at all. Ancestors get marked on the way up so a folder tile lights when
-    something inside it matches; filtering to terminal rects then collapses that
-    back to exactly what is on screen.
+    File-type and dead-folder selection USED TO LIVE HERE, as a shim override.
+    It now lives in apps-script/Dashboard.html + Treemap.html, so the web app and
+    this one share one implementation instead of drifting apart. The shim keeps
+    only what is genuinely desktop-specific.
   */
-  var pvType_sel = null, pvType_hit = null, pvType_raf = 0, pvType_t0 = 0;
-
-  function pvTypeMark(label) {
-    var hit = Object.create(null);
-    var files = [];
-    DS_ALL.forEach(function (n) {
-      if (n.kind === KIND_FOLDER || n.synthetic) return;
-      if (typeof dsTypeLabel !== 'function' || dsTypeLabel(n) !== label) return;
-      files.push(n);
-      hit[n.id] = 1;
-      var cur = DS_BYID[n.parent], guard = 0;
-      while (cur && guard++ < 300) { hit[cur.id] = 1; cur = DS_BYID[cur.parent]; }
-    });
-    return { hit: hit, files: files };
-  }
-
-  function pvTypeOverlay() {
-    if (!pvType_hit || typeof TM_RECTS === 'undefined' || !TM_CTX) return;
-    // Pulse between two alphas so the highlight reads as "selected" rather than
-    // as another data channel competing with the ramp.
-    var t = (Date.now() - pvType_t0) / 900;
-    var a = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-    TM_CTX.save();
-    TM_CTX.lineJoin = 'round';
-    for (var i = 0; i < TM_RECTS.length; i++) {
-      var r = TM_RECTS[i];
-      if (r.depth === 0 || !r.terminal || !pvType_hit.hit[r.node.id]) continue;
-      if (r.w < 2 || r.h < 2) continue;
-      TM_CTX.globalAlpha = a;
-      TM_CTX.strokeStyle = '#ffd23f';
-      TM_CTX.lineWidth = 2.5;
-      TM_CTX.strokeRect(r.x + 1.25, r.y + 1.25, r.w - 2.5, r.h - 2.5);
-      TM_CTX.globalAlpha = a * 0.22;
-      TM_CTX.fillStyle = '#ffd23f';
-      TM_CTX.fillRect(r.x, r.y, r.w, r.h);
-    }
-    TM_CTX.restore();
-  }
-
-  var pvBasePaint = window.tmPaint;
-  window.tmPaint = function () {
-    pvBasePaint.apply(this, arguments);
-    pvTypeOverlay();
-  };
-
-  function pvTypeLoop() {
-    if (!pvType_hit) { pvType_raf = 0; return; }
-    tmPaint();
-    pvType_raf = requestAnimationFrame(pvTypeLoop);
-  }
-
-  function pvTypeClear() {
-    pvType_sel = null; pvType_hit = null;
-    if (pvType_raf) { cancelAnimationFrame(pvType_raf); pvType_raf = 0; }
-    document.querySelectorAll('#typeList .row.on').forEach(function (e) { e.classList.remove('on'); });
-    var d = document.getElementById('typeDetail');
-    if (d) d.hidden = true;
-    document.getElementById('typeList').hidden = false;
-    if (typeof TM_ROOT !== 'undefined' && TM_ROOT) tmPaint();
-  }
-
-  function pvTypeSelect(label, rowEl) {
-    if (pvType_sel === label) { pvTypeClear(); return; }
-    pvTypeClear();
-    pvType_sel = label;
-    pvType_hit = pvTypeMark(label);
-    pvType_t0 = Date.now();
-    if (rowEl) rowEl.classList.add('on');
-
-    // Folders holding this type, biggest first.
-    var byFolder = Object.create(null);
-    pvType_hit.files.forEach(function (n) {
-      var p = DS_BYID[n.parent];
-      if (!p) return;
-      if (!byFolder[p.id]) byFolder[p.id] = { node: p, bytes: 0, count: 0 };
-      byFolder[p.id].bytes += n.bytes; byFolder[p.id].count++;
-    });
-    var folders = Object.keys(byFolder).map(function (k) { return byFolder[k]; })
-      .sort(function (a, b) { return b.bytes - a.bytes; });
-
-    var d = document.getElementById('typeDetail');
-    var total = pvType_hit.files.reduce(function (a, n) { return a + n.bytes; }, 0);
-    d.innerHTML =
-      '<div class="tdhead">' +
-        '<button class="btn sm ghost" id="typeBack">← All types</button>' +
-        '<span><b>' + dsEsc(label) + '</b> · ' + dsEsc(tmFmtBytes(total)) + ' in ' +
-        pvType_hit.files.length.toLocaleString() + ' files · ' +
-        folders.length.toLocaleString() + ' folders</span>' +
-      '</div>' +
-      '<div class="list">' + (folders.length ? folders.slice(0, 300).map(function (f) {
-        return '<div class="row pick" data-id="' + dsEsc(f.node.id) + '">' +
-          '<span class="nm">' + dsEsc(f.node.name) +
-          '<small>' + dsEsc(dsPath(f.node)) + '</small></span>' +
-          '<span class="sz">' + dsEsc(tmFmtBytes(f.bytes)) + '</span>' +
-          '<span class="ag">' + f.count.toLocaleString() + '</span></div>';
-      }).join('') : '<div class="empty-list">Nothing of this type.</div>') + '</div>';
-    d.hidden = false;
-    document.getElementById('typeList').hidden = true;
-    pvTypeLoop();
-  }
-
-  document.addEventListener('click', function (ev) {
-    if (!ev.target.closest) return;
-    if (ev.target.closest('#typeBack')) { pvTypeClear(); return; }
-    var det = ev.target.closest('#typeDetail .row[data-id]');
-    if (det) {
-      var n = DS_BYID[det.dataset.id];
-      if (n && typeof dsZoomTo === 'function') dsZoomTo(n);
-      return;
-    }
-    var row = ev.target.closest('#typeList .row');
-    if (!row) return;
-    var lab = row.querySelector('.ext');
-    if (lab) pvTypeSelect(lab.textContent.trim(), row);
-  });
-
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && pvType_sel) pvTypeClear(); });
 
   /* ── notice dialog ──────────────────────────────────────────────────────── */
   /*
@@ -660,63 +472,25 @@ if (DESKTOP) {
   });
 
   /* ── right-click a tile ─────────────────────────────────────────────────── */
-  var pvMenu = document.createElement('div');
-  pvMenu.id = 'deskMenu';
-  pvMenu.hidden = true;
-  document.getElementById('app').appendChild(pvMenu);   // tokens live on .viz-root
+  /*
+    The menu itself — element, placement, dismissal — is Dashboard.html's now.
+    This build only says what the items ARE, because the verbs genuinely differ:
+    Recycle Bin and File Explorer here, Drive trash there. Replacing the item
+    builder rather than binding a second contextmenu handler is what stops the
+    two implementations from both opening a menu on the same right-click.
+  */
+  window.DS_MENU_BUILD = function (n) {
+    if (!n || !n.id || n.synthetic) return [];   // rolled-up "N small files" is not a real path
+    var isFolder = n.kind === 0;
+    return [
+      { label: 'Reveal in File Explorer', run: function () { window.desktop.reveal(n.id); } },
+      { label: 'Copy full path', run: function () { window.desktop.writeClipboard(n.id); } },
+      { label: 'Move to Recycle Bin' + (isFolder ? ' (whole folder)' : ''),
+        danger: true, run: function () { deskTrash(n); } },
+    ];
+  };
 
-  var pvMenuCss = document.createElement('style');
-  pvMenuCss.textContent =
-    '#deskMenu { position: fixed; z-index: 60; min-width: 210px; padding: 4px;' +
-    '  background: var(--surface-1); border: 1px solid var(--baseline); border-radius: 8px;' +
-    '  box-shadow: var(--shadow); font-size: 12px; }' +
-    '#deskMenu .mi { padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }' +
-    '#deskMenu .mi:hover { background: var(--plane); }' +
-    '#deskMenu .mi.danger { color: var(--critical); font-weight: 550; }' +
-    '#deskMenu .hd { padding: 6px 10px 7px; color: var(--muted); border-bottom: 1px solid var(--border);' +
-    '  margin-bottom: 4px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }';
-  document.head.appendChild(pvMenuCss);
-
-  var pvTarget = null;
-  var pvCloseMenu = function () { pvMenu.hidden = true; pvTarget = null; };
-  document.addEventListener('click', pvCloseMenu);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pvCloseMenu(); });
-  window.addEventListener('blur', pvCloseMenu);
-
-  var pvCanvas = document.getElementById('map');
-  if (pvCanvas) {
-    pvCanvas.addEventListener('contextmenu', function (ev) {
-      ev.preventDefault();
-      var n = typeof tmNodeAt === 'function' ? tmNodeAt(ev) : null;
-      if (!n || !n.id || n.synthetic) return;   // rolled-up "N small files" is not a real path
-      pvTarget = n;
-      var isFolder = n.kind === 0;
-      pvMenu.innerHTML =
-        '<div class="hd">' + dsEsc(n.name) + ' · ' + dsEsc(tmFmtBytes(n.bytes)) + '</div>' +
-        '<div class="mi" data-act="reveal">Reveal in File Explorer</div>' +
-        '<div class="mi" data-act="copy">Copy full path</div>' +
-        '<div class="mi danger" data-act="trash">Move to Recycle Bin' +
-        (isFolder ? ' (whole folder)' : '') + '</div>';
-      pvMenu.hidden = false;
-      /* Flip when it would overhang, so the menu never opens off-screen. */
-      var w = pvMenu.offsetWidth, h = pvMenu.offsetHeight;
-      pvMenu.style.left = Math.max(4, Math.min(ev.clientX, window.innerWidth - w - 6)) + 'px';
-      pvMenu.style.top = Math.max(4, Math.min(ev.clientY, window.innerHeight - h - 6)) + 'px';
-    });
-  }
-
-  pvMenu.addEventListener('click', async function (ev) {
-    ev.stopPropagation();
-    var mi = ev.target.closest ? ev.target.closest('.mi') : null;
-    var n = pvTarget;
-    pvCloseMenu();
-    if (!mi || !n) return;
-    var act = mi.dataset.act;
-
-    if (act === 'reveal') { window.desktop.reveal(n.id); return; }
-    if (act === 'copy') { window.desktop.writeClipboard(n.id); return; }
-    if (act !== 'trash') return;
-
+  async function deskTrash(n) {
     /*
       Check before offering the confirm, so a protected path never even reaches a
       "Move to Recycle Bin?" prompt — being asked and then refused is worse than
@@ -761,7 +535,7 @@ if (DESKTOP) {
       })
       .withFailureHandler(function (e) { dsFail(e); })
       .trashFiles([n.id]);
-  });
+  }
 }
 </script>`;
 
