@@ -13,13 +13,16 @@ on:
       keep:
         description: 'Number of most recent desktop releases to keep'
         required: false
-        default: '3'
+        default: '1'
 
 permissions:
   contents: write
 
 env:
-  KEEP_DEFAULT: '3'
+  # Latest only. The installer is ~80 MB and there is no reason to keep an older
+  # one on the release page: the git tag survives the prune, so any version can
+  # still be checked out and rebuilt.
+  KEEP_DEFAULT: '1'
 
 jobs:
   build:
@@ -37,10 +40,17 @@ jobs:
 
       - run: npm install --no-audit --no-fund
 
-      # npm 11 gates lifecycle scripts, so electron's postinstall � the step that
-      # fetches the prebuilt binary � does not run on its own. Invoke it directly
+      # npm 11 gates lifecycle scripts, so electron's postinstall -- the step that
+      # fetches the prebuilt binary -- does not run on its own. Invoke it directly
       # rather than enabling scripts for every package in the tree.
-      - name: Fetch the Electron binary
+      #
+      # Non-fatal on purpose: electron-builder downloads its own Electron for
+      # packaging, so this binary is only needed for `npm start` in development.
+      # Locally this script was seen to exit 0 having extracted almost nothing,
+      # and a partial extract must not be able to fail a release that does not
+      # depend on it.
+      - name: Fetch the Electron binary (dev convenience, not required to package)
+        continue-on-error: true
         run: node node_modules/electron/install.js
 
       - name: Tag must match package.json
@@ -76,7 +86,7 @@ jobs:
           fi
           printf 'publishing: %s\n' "${files[@]}"
           gh release create "$GITHUB_REF_NAME" "${files[@]}" \
-            --title "$GITHUB_REF_NAME � Disk Storage Explorer" \
+            --title "$GITHUB_REF_NAME -- Disk Storage Explorer" \
             --generate-notes
 
   cleanup:
@@ -93,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           keep="$KEEP"
-          case "$keep" in ''|*[!0-9]*) keep=3 ;; esac
+          case "$keep" in ''|*[!0-9]*) keep=1 ;; esac
           [ "$keep" -lt 1 ] && keep=1
 
           # ONLY desktop-v* releases. This repo may later hold releases for other
