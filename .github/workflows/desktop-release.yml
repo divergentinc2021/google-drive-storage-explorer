@@ -37,8 +37,8 @@ jobs:
 
       - run: npm install --no-audit --no-fund
 
-      # npm 11 gates lifecycle scripts, so electron's postinstall — the step that
-      # fetches the prebuilt binary — does not run on its own. Invoke it directly
+      # npm 11 gates lifecycle scripts, so electron's postinstall � the step that
+      # fetches the prebuilt binary � does not run on its own. Invoke it directly
       # rather than enabling scripts for every package in the tree.
       - name: Fetch the Electron binary
         run: node node_modules/electron/install.js
@@ -76,7 +76,7 @@ jobs:
           fi
           printf 'publishing: %s\n' "${files[@]}"
           gh release create "$GITHUB_REF_NAME" "${files[@]}" \
-            --title "$GITHUB_REF_NAME — Storage Explorer for desktop" \
+            --title "$GITHUB_REF_NAME � Disk Storage Explorer" \
             --generate-notes
 
   cleanup:
@@ -109,3 +109,4 @@ jobs:
             echo "deleting release $t (git tag kept)"
             gh release delete "$t" --repo "$REPO" --yes
           done
+

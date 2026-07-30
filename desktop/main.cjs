@@ -30,7 +30,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0d0d0d',
-    title: 'Drive & Disk Storage Explorer',
+    title: 'Disk Storage Explorer',
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -72,7 +73,7 @@ ipcMain.handle('getBootstrap', async (_e, root) => {
   }
   const used = total && free ? total - free : 0;
   return {
-    user: root ? `${root} — local disk` : 'No folder chosen yet',
+    user: root ? `${root} — local volume` : 'No folder chosen yet',
     // Same shape as the Drive quota block. There is no trash figure and no
     // Gmail/Photos, so inDrive === usage and inTrash is 0 rather than invented.
     quota: { limit: total, usage: used, inDrive: used, inTrash: 0 },

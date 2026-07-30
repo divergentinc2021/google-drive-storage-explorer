@@ -1,5 +1,5 @@
-appId: com.divergentinc.storageexplorer.desktop
-productName: Storage Explorer
+appId: com.divergentinc.diskstorageexplorer
+productName: Disk Storage Explorer
 copyright: UWC Immersive Zone
 
 directories:
@@ -24,7 +24,7 @@ nsis:
   # Distinct from the storage-mapper installer, which also ships a "Storage"
   # product — identical filenames in a Downloads folder is how people install
   # the wrong one and report the wrong bug.
-  artifactName: StorageExplorer-Desktop-Setup-${version}.${ext}
+  artifactName: DiskStorageExplorer-Setup-${version}.${ext}
 
 mac:
   target: [dmg]

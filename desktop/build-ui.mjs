@@ -40,7 +40,27 @@ const SHIM = `
 var DESKTOP = !!window.desktop;
 
 if (DESKTOP) {
-  document.title = 'Drive & Disk Storage Explorer';
+  document.title = 'Disk Storage Explorer';
+
+  /*
+    Rewrite the wordmark. Index.html renders
+
+      <h1>Google Drive <span class="thin">Storage Explorer</span> …</h1>
+
+    so the desktop window would otherwise announce itself as the Google Drive app
+    while pointed at an SD card. Only the leading TEXT NODE is replaced — the
+    .thin span and the version pill are left alone, so "Disk" + "Storage Explorer"
+    falls out of the existing markup rather than needing it rebuilt.
+  */
+  var pvH1 = document.querySelector('h1');
+  if (pvH1 && pvH1.firstChild && pvH1.firstChild.nodeType === 3) {
+    pvH1.firstChild.nodeValue = 'Disk ';
+  }
+  var pvFoot = document.querySelector('.foot');
+  if (pvFoot) {
+    pvFoot.innerHTML = 'Created by UWC Immersive Zone · sizes come from the ' +
+      'filesystem, and activity from each file\\'s last-modified time.';
+  }
 
   /* Scan has to choose a root first. The web app scans "your Drive"; here there
      is no implicit subject until the user names one. */
@@ -86,6 +106,6 @@ writeFileSync(join(HERE, 'ui', 'index.html'),
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Drive &amp; Disk Storage Explorer</title></head><body>\n${body}\n${SHIM}\n</body></html>`);
+<title>Disk Storage Explorer</title></head><body>\n${body}\n${SHIM}\n</body></html>`);
 
 console.log('desktop/ui/index.html written');

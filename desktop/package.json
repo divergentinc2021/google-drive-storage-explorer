@@ -1,8 +1,8 @@
 {
-  "name": "storage-explorer-desktop",
-  "productName": "Storage Explorer",
+  "name": "disk-storage-explorer",
+  "productName": "Disk Storage Explorer",
   "version": "0.1.0",
-  "description": "SpaceSniffer-style treemap for a local disk or a Google Drive mount — the Apps Script UI, running against the filesystem.",
+  "description": "SpaceSniffer-style treemap for any mounted volume — internal disk, external drive, SD card, network share, or a Google Drive mount.",
   "main": "main.cjs",
   "private": true,
   "license": "MIT",

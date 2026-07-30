@@ -1,11 +1,11 @@
-# Storage Explorer — desktop
+# Disk Storage Explorer — desktop build
 
-The same treemap, pointed at a local disk or a mounted Google Drive instead of
-the Drive API.
+The same treemap, pointed at a mounted volume — internal disk, external drive,
+SD card, network share, or a Google Drive mount — instead of the Drive API.
 
 ## Why this is not a wrapper around the web app
 
-The obvious build — an Electron window loading the deployed `/exec` URL — does
+The obvious build � an Electron window loading the deployed `/exec` URL � does
 not work. **Google blocks OAuth sign-in inside embedded webviews**
 (`disallowed_useragent`), so the window reaches the Google login screen and stops
 there. Workarounds exist (spoof the user agent, or bounce auth through the system
@@ -23,7 +23,7 @@ getBootstrap · scanChunk · measureDriveChunk · buildManifestCsv · trashFiles
 ```
 
 `preload.cjs` exposes a `google.script.run` object of the same shape backed by
-IPC, so `Index/Styles/Treemap/Dashboard.html` run **unmodified** — the same bytes
+IPC, so `Index/Styles/Treemap/Dashboard.html` run **unmodified** � the same bytes
 the web app deploys. `tools/build_preview.mjs` had already proved the contract was
 small enough to reimplement; it has been driving the UI from synthetic data all
 along. This is that mock with a filesystem behind it.
@@ -38,12 +38,12 @@ forked copy of the renderer.
 |---|---|
 | Drive quota | volume total / free via `statfs` |
 | `quotaBytesUsed` | `stat().size` |
-| last viewed by me | `mtime` — see below |
-| Google-native stubs | `.gdoc` / `.gsheet` / … on a Drive mount, still detected |
-| shared drives | hidden — no equivalent |
-| trash (`trashed: true`) | `shell.trashItem` → OS Recycle Bin |
+| last viewed by me | `mtime` � see below |
+| Google-native stubs | `.gdoc` / `.gsheet` / ⬦ on a Drive mount, still detected |
+| shared drives | hidden � no equivalent |
+| trash (`trashed: true`) | `shell.trashItem` �  OS Recycle Bin |
 | open in Drive | reveal in File Explorer |
-| `md5Checksum` from the API | **empty** — see below |
+| `md5Checksum` from the API | **empty** � see below |
 
 **Activity uses `mtime`, not access time.** Windows and most Linux mounts disable
 or coarsen `atime` (`relatime`), and reading a file to scan it would poison the
@@ -90,3 +90,4 @@ one repo, two namespaces, no collisions. The prune step only ever touches
   appear as their own entry instead.
 - **Permission-denied directories are skipped silently.** A scan of `C:\` will
   quietly omit parts of `Windows` and other users' profiles.
+
