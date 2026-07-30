@@ -1,0 +1,6 @@
+# Generated from ../apps-script by build-ui.mjs. Committing it would let a stale
+# copy ship a renderer that no longer matches the web app.
+ui/
+
+node_modules/
+dist/

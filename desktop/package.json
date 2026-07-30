@@ -1,0 +1,22 @@
+{
+  "name": "storage-explorer-desktop",
+  "productName": "Storage Explorer",
+  "version": "0.1.0",
+  "description": "SpaceSniffer-style treemap for a local disk or a Google Drive mount — the Apps Script UI, running against the filesystem.",
+  "main": "main.cjs",
+  "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Laurent de Laroche Souvestre",
+    "email": "laurent@divergentbiz.com"
+  },
+  "scripts": {
+    "build:ui": "node build-ui.mjs",
+    "start": "npm run build:ui && electron .",
+    "dist": "npm run build:ui && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3"
+  }
+}

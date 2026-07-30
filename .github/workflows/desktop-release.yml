@@ -1,0 +1,111 @@
+# Build and publish the desktop Storage Explorer installer.
+#
+# Triggered by a `desktop-v*` tag rather than `v*`, because this repo's plain
+# version numbers belong to the Apps Script web app and its 200 lifetime
+# deployment versions. Two products, two tag namespaces, no collisions.
+name: Desktop release
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Number of most recent desktop releases to keep'
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+
+env:
+  KEEP_DEFAULT: '3'
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install --no-audit --no-fund
+
+      # npm 11 gates lifecycle scripts, so electron's postinstall — the step that
+      # fetches the prebuilt binary — does not run on its own. Invoke it directly
+      # rather than enabling scripts for every package in the tree.
+      - name: Fetch the Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Tag must match package.json
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#desktop-v}"
+          pkg="$(node -p "require('./package.json').version")"
+          echo "tag=$tag package.json=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag desktop-v$tag does not match desktop/package.json $pkg."
+            exit 1
+          fi
+
+      # The renderer is generated from ../apps-script, so a stale ui/ would ship
+      # last week's treemap. Always rebuild, never trust a committed copy.
+      - name: Assemble the UI from apps-script/
+        run: node build-ui.mjs
+
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(dist/*.exe)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::electron-builder produced no .exe in desktop/dist/"
+            ls -la dist || true
+            exit 1
+          fi
+          printf 'publishing: %s\n' "${files[@]}"
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+            --title "$GITHUB_REF_NAME — Storage Explorer for desktop" \
+            --generate-notes
+
+  cleanup:
+    needs: build
+    if: always() && (needs.build.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune old desktop releases, keep their tags
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ github.event.inputs.keep || env.KEEP_DEFAULT }}
+        run: |
+          set -euo pipefail
+          keep="$KEEP"
+          case "$keep" in ''|*[!0-9]*) keep=3 ;; esac
+          [ "$keep" -lt 1 ] && keep=1
+
+          # ONLY desktop-v* releases. This repo may later hold releases for other
+          # things, and a prune that walked every release would delete them.
+          mapfile -t tags < <(gh release list --repo "$REPO" --limit 200 \
+            --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[].tagName | select(startswith("desktop-v"))')
+
+          echo "found ${#tags[@]} desktop release(s); keeping $keep"
+          if [ "${#tags[@]}" -le "$keep" ]; then echo "nothing to prune"; exit 0; fi
+
+          for t in "${tags[@]:$keep}"; do
+            echo "deleting release $t (git tag kept)"
+            gh release delete "$t" --repo "$REPO" --yes
+          done
