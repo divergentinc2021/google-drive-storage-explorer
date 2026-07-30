@@ -29,7 +29,7 @@ var EXPORTABLE = {
 function dsInit() {
   tmInit('map', 'tip', dsZoomTo, dsOpenInDrive, dsDescribe);
 
-  document.getElementById('btnScan').addEventListener('click', dsScan);
+  document.getElementById('btnScan').addEventListener('click', dsShowPicker);
   document.getElementById('btnTheme').addEventListener('click', dsToggleTheme);
   document.getElementById('btnUp').addEventListener('click', dsZoomUp);
   document.getElementById('btnRelief').addEventListener('click', dsToggleRelief);
@@ -39,7 +39,50 @@ function dsInit() {
   document.getElementById('btnMeasure').addEventListener('click', dsMeasureAll);
   document.getElementById('deadAfter').addEventListener('change', function () {
     DS_DEAD_DAYS = Number(this.value);
+    dsClearSel();   // the row that was selected may not survive the new threshold
     dsRenderLists();
+  });
+
+  /*
+   * Selection. Delegated, because both lists are re-rendered wholesale on every
+   * scan and every threshold change — per-row listeners would be re-bound each
+   * time and leak the old ones.
+   */
+  ['typeList', 'deadList'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', function (ev) {
+      var row = ev.target.closest ? ev.target.closest('.row.pick') : null;
+      if (!row || !el.contains(row)) return;
+      if (row.hasAttribute('data-type')) dsSelect('type', row.getAttribute('data-type'));
+      else if (row.hasAttribute('data-dead')) dsSelect('dead', row.getAttribute('data-dead'));
+    });
+    el.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      var row = ev.target.closest ? ev.target.closest('.row.pick') : null;
+      if (!row) return;
+      ev.preventDefault();
+      row.click();
+    });
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && DS_SEL) dsClearSel();
+  });
+  TM_AFTER_RENDER = dsResolveSel;
+
+  // Right-click a tile. Bound once, here, so no build ends up with two menus.
+  var dsCv = document.getElementById('map');
+  if (dsCv) {
+    dsCv.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault();
+      var n = typeof tmNodeAt === 'function' ? tmNodeAt(ev) : null;
+      if (n) dsOpenMenu(ev, n);
+    });
+  }
+
+  // Side tabs. The map stays put; only the right-hand pane swaps.
+  document.querySelectorAll('.siderail button').forEach(function (b) {
+    b.addEventListener('click', function () { dsShowTab(b.getAttribute('data-tab')); });
   });
   document.querySelectorAll('.seg button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -80,6 +123,12 @@ function dsOnBoot(b) {
   dsRenderDrives();
   dsRenderGateNote();
   document.getElementById('legend').innerHTML = tmLegendHtml();
+
+  // Ask what to map straight away — the shared drives are only known now, and a
+  // dropdown above the fold is the thing people miss and then scan the wrong scope.
+  // The desktop build asks about disks instead, and sets this so there is one
+  // startup dialog rather than two stacked on top of each other.
+  if (!window.DS_SKIP_PICKER) dsShowPicker();
 }
 
 function dsFail(err) {
@@ -99,15 +148,36 @@ function dsScan() {
   document.getElementById('mapEmpty').hidden = true;
   dsProgress(0, 'Starting…');
 
-  var raw = document.getElementById('scope').value;
-  var opts = { scope: 'owned' };
-  if (raw === 'all') opts.scope = 'all';
-  else if (raw.indexOf('drive:') === 0) { opts.scope = 'all'; opts.driveId = raw.slice(6); }
-
-  dsScanStep(opts, 0);
+  if (!DS_TARGETS.length) DS_TARGETS = [dsScopeTarget()];
+  dsScanTarget(0, 0);
 }
 
-function dsScanStep(opts, seen) {
+/** Fall back to the scope dropdown when nothing was picked. */
+function dsScopeTarget() {
+  var raw = document.getElementById('scope').value;
+  if (raw === 'all') return { name: 'Everything I can see', scope: 'all' };
+  if (raw.indexOf('drive:') === 0) {
+    var id = raw.slice(6);
+    var d = ((DS_BOOT && DS_BOOT.drives) || []).filter(function (x) { return x.id === id; })[0];
+    return { name: (d && d.name) || 'Shared drive', scope: 'all', driveId: id };
+  }
+  return { name: 'My Drive', scope: 'owned' };
+}
+
+/*
+ * Targets run one after another, not in parallel: each is its own paged crawl,
+ * and Apps Script gives the whole page a single quota — firing several at once
+ * would race them into the same limit and make a partial scan look complete.
+ */
+function dsScanTarget(ti, seen) {
+  if (ti >= DS_TARGETS.length) return dsScanDone();
+  var t = DS_TARGETS[ti];
+  var opts = { scope: t.scope };
+  if (t.driveId) opts.driveId = t.driveId;
+  dsScanStep(opts, seen, ti);
+}
+
+function dsScanStep(opts, seen, ti) {
   google.script.run
     .withSuccessHandler(function (res) {
       // Each chunk ships its own mime dictionary; remap into the global table.
@@ -125,16 +195,19 @@ function dsScanStep(opts, seen) {
           md5: t[7] || '',
           children: [], fileCount: 0, minDays: t[5] < 0 ? 1e9 : t[5]
         };
+        n.tgt = ti;   // which target this came from, for the group nodes
         DS_ALL.push(n);
         DS_BYID[n.id] = n;
       });
 
       var total = seen + res.items.length;
-      dsProgress(res.done ? 100 : Math.min(96, 8 + total / 400),
-        total.toLocaleString() + ' items indexed…');
+      var label = DS_TARGETS.length > 1
+        ? DS_TARGETS[ti].name + ' · ' + total.toLocaleString() + ' items indexed…'
+        : total.toLocaleString() + ' items indexed…';
+      dsProgress(res.done && ti >= DS_TARGETS.length - 1 ? 100 : Math.min(96, 8 + total / 400), label);
 
-      if (res.done) dsScanDone();
-      else { opts.pageToken = res.nextPageToken; dsScanStep(opts, total); }
+      if (res.done) dsScanTarget(ti + 1, total);
+      else { opts.pageToken = res.nextPageToken; dsScanStep(opts, total, ti); }
     })
     .withFailureHandler(dsFail)
     .scanChunk(opts);
@@ -167,6 +240,32 @@ function dsBuildTree() {
     self: 0, bytes: 0, days: 0, mime: '', children: [], fileCount: 0, minDays: 1e9
   };
   DS_BYID['__root__'] = root;
+  if (DS_TARGETS.length === 1) root.name = DS_TARGETS[0].name;
+  else if (DS_TARGETS.length > 1) root.name = DS_TARGETS.length + ' locations';
+
+  /*
+   * With more than one target, each gets a group node so the map keeps them
+   * apart. Without it every scanned drive dumps its top level into one root and
+   * the treemap interleaves them — you would be comparing two drives while
+   * unable to see where either one begins.
+   *
+   * Group nodes live in DS_BYID but NOT in DS_ALL: the lists iterate DS_ALL, and
+   * a synthetic container would otherwise show up as a folder you could mark
+   * dead or trash.
+   */
+  var groups = {};
+  if (DS_TARGETS.length > 1) {
+    DS_TARGETS.forEach(function (t, i) {
+      var g = {
+        id: '__t' + i + '__', parent: '__root__', name: t.name, kind: KIND_FOLDER,
+        self: 0, bytes: 0, days: 0, mime: '', children: [], fileCount: 0,
+        minDays: 1e9, synthetic: true
+      };
+      DS_BYID[g.id] = g;
+      groups[i] = g;
+      root.children.push(g);
+    });
+  }
 
   // Rebuilt after a trash, so children MUST be cleared first — otherwise every
   // node gets linked a second time and the map doubles.
@@ -175,7 +274,7 @@ function dsBuildTree() {
   DS_ALL.forEach(function (n) {
     var p = DS_BYID[n.parent];
     if (p && p !== n) p.children.push(n);
-    else root.children.push(n); // orphan / shared-in / top level
+    else (groups[n.tgt] || root).children.push(n); // orphan / shared-in / top level
   });
 
   // Post-order rollup, iterative so a deep tree can't blow the stack.
@@ -501,7 +600,8 @@ function dsRenderDead() {
   var el = document.getElementById('deadList');
   if (!tops.length) { el.innerHTML = '<div class="empty-list">No folders fully idle past this threshold.</div>'; return; }
   el.innerHTML = tops.slice(0, 200).map(function (n) {
-    return '<div class="row"><span class="pill serious">⇠ move</span>' +
+    return '<div class="row pick" data-dead="' + dsEsc(n.id) + '" tabindex="0" ' +
+      'title="Show this folder on the map"><span class="pill serious">⇠ move</span>' +
       '<span class="nm">' + dsEsc(n.name) + '<small>' + dsEsc(dsPath(n)) + ' · ' +
       n.fileCount.toLocaleString() + ' files</small></span>' +
       '<span class="sz">' + tmFmtBytes(n.bytes) + '</span>' +
@@ -533,6 +633,334 @@ function dsRenderClasses() {
   }).join('');
 }
 
+/*
+ * ── selection: a side-panel row answered on the map ──────────────────────────
+ *
+ * One implementation for both lists. A file type resolves to many scattered
+ * tiles; a dead folder resolves to one. The difference is only the predicate,
+ * so the machinery — resolve to tiles, light them, list where they are, clear
+ * on Escape or a second click — is shared.
+ */
+/*
+ * ── right-click a tile ──────────────────────────────────────────────────────
+ *
+ * The shell — element, positioning, dismissal — is shared. The ITEMS are not:
+ * this build trashes to Drive through a server that checks the NAS first, the
+ * desktop build moves to the Recycle Bin through a path classifier. Same menu,
+ * different verbs, so an app replaces DS_MENU_BUILD rather than rebuilding the
+ * menu and ending up with two of them bound to one contextmenu event.
+ */
+var DS_MENU_BUILD = null;
+var DS_MENU_NODE = null;
+
+function dsMenuItems(n) {
+  if (DS_MENU_BUILD) return DS_MENU_BUILD(n);
+  var items = [];
+  if (n.kind === KIND_FOLDER) items.push({ label: 'Zoom to this folder', act: 'zoom' });
+  items.push({ label: 'Open in Drive', act: 'open' });
+  /*
+   * Files only, deliberately. Trashing a FOLDER would take everything inside it
+   * in one call, and the NAS gate this app relies on is per-file — so a folder
+   * trash is exactly the operation that would slip unverified files past the
+   * check that exists to stop that.
+   */
+  if (n.kind !== KIND_FOLDER) {
+    items.push({ label: 'Move to Drive trash…', act: 'trash', danger: true });
+  }
+  return items;
+}
+
+function dsCloseMenu() {
+  var m = document.getElementById('dsMenu');
+  if (m) { m.hidden = true; }
+  DS_MENU_NODE = null;
+}
+
+function dsOpenMenu(ev, n) {
+  var m = document.getElementById('dsMenu');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'dsMenu';
+    m.hidden = true;
+    // Into #app, not <body> — the design tokens are scoped to .viz-root, and a
+    // menu outside it resolves every var() to nothing and renders unstyled.
+    (document.getElementById('app') || document.body).appendChild(m);
+    document.addEventListener('click', dsCloseMenu);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') dsCloseMenu(); });
+    window.addEventListener('resize', dsCloseMenu);
+  }
+  DS_MENU_NODE = n;
+  var items = dsMenuItems(n);
+  m.innerHTML = '<div class="hd">' + dsEsc(n.name || '/') + '</div>' +
+    items.map(function (it, i) {
+      return '<div class="mi' + (it.danger ? ' danger' : '') + '" data-i="' + i + '">' +
+        dsEsc(it.label) + '</div>';
+    }).join('');
+  m.hidden = false;
+
+  // Flip rather than overflow: a menu opened near the right or bottom edge must
+  // stay on screen, and it can only be measured once it is laid out.
+  var r = m.getBoundingClientRect();
+  var x = ev.clientX, y = ev.clientY;
+  if (x + r.width > window.innerWidth - 6) x = Math.max(6, x - r.width);
+  if (y + r.height > window.innerHeight - 6) y = Math.max(6, y - r.height);
+  m.style.left = x + 'px';
+  m.style.top = y + 'px';
+
+  m.querySelectorAll('.mi').forEach(function (el) {
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var it = items[Number(el.getAttribute('data-i'))];
+      dsCloseMenu();
+      dsMenuAct(it, n);
+    });
+  });
+}
+
+function dsMenuAct(it, n) {
+  if (it.run) return it.run(n);
+  if (it.act === 'zoom') return dsZoomTo(n);
+  if (it.act === 'open') return dsOpenInDrive(n);
+  if (it.act === 'trash') return dsTrashNode(n);
+}
+
+/** Trash one file, through the same server call and the same gate as the button. */
+function dsTrashNode(n) {
+  var msg = 'Move "' + n.name + '" (' + tmFmtBytes(n.bytes) + ') to the Drive trash?\n\n' +
+    'This is reversible — Drive holds trashed files for 30 days.\n' +
+    'Quota is NOT freed until the trash is emptied, which this tool never does.' +
+    (DS_BOOT && DS_BOOT.caps.nasVerify ? '' :
+      '\n\nNAS verification is OFF: this file is not confirmed backed up.');
+  if (!window.confirm(msg)) return;
+  google.script.run
+    .withSuccessHandler(function (r) {
+      if (r.trashed.length) {
+        var i = DS_ALL.indexOf(DS_BYID[n.id]);
+        if (i > -1) DS_ALL.splice(i, 1);
+        delete DS_BYID[n.id];
+        dsBuildTree();
+        DS_STACK = [DS_TREE];
+        tmSetRoot(DS_TREE);
+        dsRenderCrumbs();
+        dsRenderLists();
+        dsDialog('<h3>Moved to trash</h3><p>' + dsEsc(n.name) + '</p>' +
+          '<p>Quota is unchanged until you empty the Drive trash manually.</p>');
+      } else if (r.skipped.length) {
+        dsDialog('<h3>Not trashed</h3><p>The server refused: this file is not confirmed ' +
+          'backed up on the NAS.</p>');
+      } else {
+        dsDialog('<h3>Not trashed</h3><pre>' +
+          dsEsc((r.failed[0] && r.failed[0].reason) || 'Unknown error') + '</pre>');
+      }
+    })
+    .withFailureHandler(dsFail)
+    .trashFiles([n.id]);
+}
+
+/*
+ * Switching tabs does NOT clear the selection. Picking .mov on the File types
+ * tab and then opening Dead folders to cross-check is a normal move, and losing
+ * the gold every time you look at something else would make the pairing useless.
+ */
+function dsShowTab(id) {
+  document.querySelectorAll('.siderail button').forEach(function (b) {
+    var on = b.getAttribute('data-tab') === id;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tabpane').forEach(function (p) { p.hidden = p.id !== id; });
+}
+
+/*
+ * ── what to scan ────────────────────────────────────────────────────────────
+ *
+ * A dialog at boot instead of a dropdown you might never notice. Ticking more
+ * than one draws them side by side in a single treemap, which is the only way
+ * to compare a shared drive against your own without running the tool twice.
+ */
+var DS_TARGETS = [];
+
+function dsPickerHtml() {
+  var rows = [
+    { key: 'owned', name: 'My Drive', sub: 'Files you own', scope: 'owned' },
+    { key: 'all', name: 'Everything I can see', sub: 'Includes files shared with you', scope: 'all' }
+  ];
+  ((DS_BOOT && DS_BOOT.drives) || []).forEach(function (d) {
+    rows.push({ key: 'drive:' + d.id, name: d.name, sub: 'Shared drive',
+                scope: 'all', driveId: d.id });
+  });
+  DS_PICK_ROWS = rows;
+  return '<h3>What should I map?</h3>' +
+    '<p class="hint">Tick one or more. They are drawn side by side in a single ' +
+    'treemap, so you can compare them directly.</p>' +
+    '<div class="picklist">' + rows.map(function (r, i) {
+      return '<label class="pickrow"><input type="checkbox" data-i="' + i + '"' +
+        (r.key === 'owned' ? ' checked' : '') + '>' +
+        '<span class="nm">' + dsEsc(r.name) + '<small>' + dsEsc(r.sub) + '</small></span></label>';
+    }).join('') + '</div>' +
+    '<div class="pickfoot"><button class="btn ghost" id="pickCancel">Cancel</button>' +
+    '<button class="btn" id="pickGo">Scan</button></div>';
+}
+var DS_PICK_ROWS = [];
+
+function dsShowPicker() {
+  dsDialog(dsPickerHtml());
+  var go = document.getElementById('pickGo');
+  var sync = function () {
+    go.disabled = !document.querySelectorAll('.pickrow input:checked').length;
+  };
+  document.querySelectorAll('.pickrow input').forEach(function (c) {
+    c.addEventListener('change', sync);
+  });
+  sync();
+  document.getElementById('pickCancel').addEventListener('click', dsCloseDialog);
+  go.addEventListener('click', function () {
+    DS_TARGETS = [].slice.call(document.querySelectorAll('.pickrow input:checked'))
+      .map(function (c) { return DS_PICK_ROWS[Number(c.getAttribute('data-i'))]; });
+    dsCloseDialog();
+    dsScan();
+  });
+}
+
+var DS_SEL = null;   // { kind:'type'|'dead', key: string }
+
+/*
+ * Which drawn tile stands for this node?
+ *
+ * Not "the node's own rect" — at depth 5+ or inside a folded "small files"
+ * bucket there isn't one. Walk up until a tile that was actually painted is
+ * found. That tile is both the honest answer to "where is it" and the thing
+ * the user can click.
+ */
+function dsTileFor(node, idx) {
+  var by = DS_BYID, n = node, guard = 0;
+  while (n && guard++ < 64) {
+    if (idx.terminal[n.id]) return n.id;
+    n = by[n.parent];
+  }
+  // Nothing terminal on the path — fall back to the deepest painted ancestor,
+  // marked so the renderer rings it instead of filling it.
+  n = node; guard = 0;
+  while (n && guard++ < 64) {
+    if (idx.present[n.id]) return '^' + n.id;
+    n = by[n.parent];
+  }
+  return null;
+}
+
+function dsRectIndex() {
+  var terminal = {}, present = {};
+  for (var i = 0; i < TM_RECTS.length; i++) {
+    var r = TM_RECTS[i];
+    if (r.depth === 0) continue;
+    present[r.node.id] = 1;
+    if (r.terminal) terminal[r.node.id] = 1;
+  }
+  return { terminal: terminal, present: present };
+}
+
+function dsClearSel() {
+  DS_SEL = null;
+  tmClearHighlight();
+  var bar = document.getElementById('selBar');
+  if (bar) { bar.hidden = true; bar.innerHTML = ''; }
+  var i, els = document.querySelectorAll('.row.sel');
+  for (i = 0; i < els.length; i++) els[i].classList.remove('sel');
+}
+
+function dsSelect(kind, key) {
+  if (DS_SEL && DS_SEL.kind === kind && DS_SEL.key === key) { dsClearSel(); return; }
+  dsClearSel();
+  if (!TM_RECTS || !TM_RECTS.length) return;
+  DS_SEL = { kind: kind, key: key };
+  dsResolveSel();
+}
+
+/** Zoom, then let the selection re-light itself against the new layout. */
+function dsGoto(node) { if (node) tmSetRoot(node); }
+
+function dsResolveSel() {
+  if (!DS_SEL || !TM_RECTS || !TM_RECTS.length) return;
+  var kind = DS_SEL.kind, key = DS_SEL.key;
+
+  var by = DS_BYID, idx = dsRectIndex();
+  var match = [], i, n;
+  if (kind === 'type') {
+    for (i = 0; i < DS_ALL.length; i++) {
+      n = DS_ALL[i];
+      if (n.kind === KIND_FOLDER || n.synthetic) continue;
+      if (dsTypeLabel(n) === key) match.push(n);
+    }
+  } else {
+    n = by[key];
+    if (n) match.push(n);
+  }
+
+  // Resolve to tiles, and tally the holding folders while we are walking.
+  var tiles = {}, folders = {}, bytes = 0, order = [];
+  for (i = 0; i < match.length; i++) {
+    n = match[i];
+    bytes += n.bytes || 0;
+    var t = dsTileFor(n, idx);
+    if (t) tiles[t] = 1;
+    var holder = kind === 'type' ? by[n.parent] : n;
+    if (holder) {
+      if (!folders[holder.id]) { folders[holder.id] = { n: holder, c: 0, b: 0 }; order.push(holder.id); }
+      folders[holder.id].c++;
+      folders[holder.id].b += n.bytes || 0;
+    }
+  }
+
+  var ids = Object.keys(tiles);
+  tmSetHighlight(ids);
+
+  var list = order.map(function (id) { return folders[id]; })
+                  .sort(function (a, b) { return b.b - a.b; });
+  dsRenderSelBar(kind, key, match.length, bytes, list, ids.length);
+
+  // Mark the originating row.
+  var sel = document.querySelector('.row[data-' + kind + '="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
+  if (sel) sel.classList.add('sel');
+}
+
+function dsRenderSelBar(kind, key, count, bytes, folders, tileCount) {
+  var bar = document.getElementById('selBar');
+  if (!bar) return;
+  var head = kind === 'type'
+    ? count.toLocaleString() + ' ' + dsEsc(key) + (count === 1 ? ' file' : ' files') +
+      ' · ' + tmFmtBytes(bytes) + ' · ' + folders.length.toLocaleString() +
+      (folders.length === 1 ? ' folder' : ' folders')
+    : dsEsc(key && folders[0] ? folders[0].n.name : 'folder') + ' · ' + tmFmtBytes(bytes);
+
+  var note = tileCount
+    ? tileCount.toLocaleString() + (tileCount === 1 ? ' tile' : ' tiles') + ' lit'
+    : 'not visible at this zoom';
+
+  var rows = folders.slice(0, 40).map(function (f) {
+    return '<button class="selrow" data-goto="' + dsEsc(f.n.id) + '">' +
+      '<span class="nm">' + dsEsc(f.n.name || '/') + '<small>' + dsEsc(dsPath(f.n)) + '</small></span>' +
+      (kind === 'type' ? '<span class="num">' + f.c.toLocaleString() + '</span>' : '') +
+      '<span class="sz">' + tmFmtBytes(f.b) + '</span></button>';
+  }).join('');
+  if (folders.length > 40) {
+    rows += '<div class="selmore">+ ' + (folders.length - 40).toLocaleString() + ' more</div>';
+  }
+
+  bar.innerHTML =
+    '<div class="selhead"><b>' + head + '</b><span class="selnote">' + note + '</span>' +
+    '<button class="selx" id="selClose" title="Clear selection" aria-label="Clear selection">✕</button></div>' +
+    '<div class="sellist">' + rows + '</div>';
+  bar.hidden = false;
+
+  document.getElementById('selClose').addEventListener('click', dsClearSel);
+  var btns = bar.querySelectorAll('.selrow'), i;
+  for (i = 0; i < btns.length; i++) {
+    btns[i].addEventListener('click', function () {
+      dsGoto(DS_BYID[this.getAttribute('data-goto')]);
+    });
+  }
+}
+
 // ── storage by file type ────────────────────────────────────────────────────
 function dsTypeLabel(n) {
   if (n.kind === KIND_SHORTCUT) return 'shortcut';
@@ -560,7 +988,9 @@ function dsRenderTypes() {
   var max = rows[0].bytes || 1;
   el.innerHTML = rows.map(function (r) {
     var pct = Math.max(r.bytes > 0 ? 2 : 0, 100 * r.bytes / max);
-    return '<div class="row"><span class="ext">' + dsEsc(r.ext) + '</span>' +
+    return '<div class="row pick" data-type="' + dsEsc(r.ext) + '" tabindex="0" ' +
+      'title="Show every ' + dsEsc(r.ext) + ' on the map">' +
+      '<span class="ext">' + dsEsc(r.ext) + '</span>' +
       '<span class="bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
       '<span class="nm"></span>' +
       '<span class="sz">' + (r.bytes ? tmFmtBytes(r.bytes) : '~0') + '</span>' +
@@ -806,6 +1236,11 @@ function dsDialog(html) {
   document.getElementById('dlgBody').innerHTML = html;
   var d = document.getElementById('dlg');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+}
+
+function dsCloseDialog() {
+  var d = document.getElementById('dlg');
+  if (d.close) d.close(); else d.removeAttribute('open');
 }
 
 function dsToggleRelief() {

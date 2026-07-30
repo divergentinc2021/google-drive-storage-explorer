@@ -843,6 +843,97 @@ function tmRender() {
   TM_BUF_CTX.setTransform(1, 0, 0, 1, 0, 0);
   TM_BUF_CTX.clearRect(0, 0, TM_BUF.width, TM_BUF.height);
   TM_BUF_CTX.drawImage(TM_CANVAS, 0, 0);
+
+  /*
+   * 6 · let a selection re-resolve itself.
+   *
+   * Highlight ids name TILES, not files, and zooming or changing depth paints a
+   * different set of tiles — so ids computed against the previous layout are
+   * stale the moment this function runs. Anything that redraws must give the
+   * selection a chance to recompute, or a selected type quietly stops lighting
+   * up after the first zoom.
+   */
+  if (typeof TM_AFTER_RENDER === 'function') TM_AFTER_RENDER();
+}
+
+/*
+ * ── highlight ───────────────────────────────────────────────────────────────
+ *
+ * A set of ids that pulse gold, so a selection made in a side panel — a file
+ * type, a dead folder — can be answered on the map with "here, and here".
+ *
+ * It lives on the paint pass, not the render pass. Pulsing by re-running
+ * tmRender would redo layout, relief and every label 20 times a second; the
+ * blit already exists for the hover ring and costs ~0.2ms, so the animation
+ * is effectively free and the expensive buffer is untouched.
+ *
+ * Only TERMINAL rects light. Matching files are routinely deeper than the map
+ * draws, or folded into a "small files" node, so the file itself often is not
+ * a tile at all — the honest answer is to light the tile that CONTAINS it,
+ * which is also the one you can click.
+ */
+var TM_HL = null;      // { has: {id:1}, hue: 'gold' } or null
+var TM_HL_RAF = 0, TM_HL_T = 0;
+var TM_AFTER_RENDER = null;   // set by the dashboard; see the end of tmRender
+
+function tmSetHighlight(ids) {
+  var has = null, n = 0, i;
+  if (ids && ids.length) {
+    has = {};
+    for (i = 0; i < ids.length; i++) { has[ids[i]] = 1; n++; }
+  }
+  TM_HL = n ? { has: has } : null;
+  if (TM_HL) {
+    if (!TM_HL_RAF) {
+      TM_HL_T = 0;
+      TM_HL_RAF = requestAnimationFrame(tmHlTick);
+    }
+  } else if (TM_HL_RAF) {
+    cancelAnimationFrame(TM_HL_RAF);
+    TM_HL_RAF = 0;
+    tmPaint();
+  }
+  return n;
+}
+
+function tmClearHighlight() { return tmSetHighlight(null); }
+
+function tmHlTick(ts) {
+  if (!TM_HL) { TM_HL_RAF = 0; return; }
+  TM_HL_T = ts || 0;
+  tmPaint();
+  TM_HL_RAF = requestAnimationFrame(tmHlTick);
+}
+
+function tmDrawHighlight() {
+  if (!TM_HL) return;
+  // 1.4s period, eased so it dwells at the bright end rather than strobing.
+  var ph = (Math.sin(TM_HL_T / 1400 * Math.PI * 2) + 1) / 2;
+  var a = 0.14 + 0.20 * ph;
+  var i, r, any = false;
+  for (i = 0; i < TM_RECTS.length; i++) {
+    r = TM_RECTS[i];
+    if (r.depth === 0 || !r.terminal || !TM_HL.has[r.node.id]) continue;
+    any = true;
+    TM_CTX.fillStyle = 'rgba(255,196,0,' + a.toFixed(3) + ')';
+    TM_CTX.fillRect(r.x, r.y, r.w, r.h);
+    if (r.w > 6 && r.h > 6) {
+      TM_CTX.strokeStyle = 'rgba(255,214,64,' + (0.45 + 0.35 * ph).toFixed(3) + ')';
+      TM_CTX.lineWidth = 2;
+      TM_CTX.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+    }
+  }
+  // Nothing on screen matched — the hits are inside a collapsed branch. Ring
+  // the ancestors that are visible so the eye still has somewhere to go.
+  if (!any) {
+    for (i = 0; i < TM_RECTS.length; i++) {
+      r = TM_RECTS[i];
+      if (r.depth === 0 || !TM_HL.has['^' + r.node.id]) continue;
+      TM_CTX.strokeStyle = 'rgba(255,214,64,' + (0.5 + 0.3 * ph).toFixed(3) + ')';
+      TM_CTX.lineWidth = 3;
+      TM_CTX.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3);
+    }
+  }
 }
 
 /** Blit the last frame and draw the hover ring. Cheap enough for mousemove. */
@@ -852,6 +943,7 @@ function tmPaint() {
   TM_CTX.clearRect(0, 0, TM_CANVAS.width, TM_CANVAS.height);
   TM_CTX.drawImage(TM_BUF, 0, 0);
   TM_CTX.setTransform(TM_DPR, 0, 0, TM_DPR, 0, 0);
+  tmDrawHighlight();   // before the early return — a highlight outlives hover
   if (!TM_HOVER) return;
   // Two-tone ring: a single ink cannot stay visible across the whole ramp.
   var r = TM_HOVER;

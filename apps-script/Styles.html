@@ -108,6 +108,7 @@
      encoding could not be changed without repainting half the UI. Same values
      the red ramp has today, so chrome is unaffected by ramp work. */
   --brand-soft: #e9b4af; --brand-mid: #dd726b; --brand: #d34b49;
+  --gold: #e8a300;
   --brand-strong: #c41e29; --brand-deep: #a40a1b;
 
   --tile-stroke: rgba(252,252,251,.85);
@@ -134,6 +135,7 @@
     --age-0: #beffbd; --age-1: #1cd9b1; --age-2: #009fa8; --age-3: #00698e; --age-4: #0b3474;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
+  --gold: #ffc400;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
 
     --tile-stroke: rgba(26,26,25,.85);
@@ -157,6 +159,7 @@
   --age-0: #beffbd; --age-1: #1cd9b1; --age-2: #009fa8; --age-3: #00698e; --age-4: #0b3474;
 
   --brand-soft: #6c3531; --brand-mid: #b64340; --brand: #da4b49;
+  --gold: #ffc400;
   --brand-strong: #f55f5b; --brand-deep: #ff8a82;
 
   --tile-stroke: rgba(26,26,25,.85);
@@ -325,6 +328,135 @@ select {
 .tip .h { margin-top: 5px; font-size: 10px; color: var(--muted); }
 .tip .r { color: var(--text-secondary); display: flex; justify-content: space-between; gap: 14px; }
 .tip .r b { color: var(--text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
+
+/* ── workspace: map beside a tabbed rail ────────────────────────────────────
+ * The panels used to stack under the map, so "read a row, look at the map" was
+ * always a scroll. Side by side is what makes the selection feature legible.
+ */
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px; align-items: start; }
+.workspace > .mapwrap { margin: 0; }
+@media (max-width: 1100px) { .workspace { grid-template-columns: minmax(0, 1fr); } }
+
+.sidepanel {
+  display: grid; grid-template-columns: 74px minmax(0, 1fr);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow); overflow: hidden;
+  height: 660px;
+}
+@media (max-width: 1100px) { .sidepanel { height: 460px; } }
+
+.siderail {
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 5px;
+  background: var(--plane); border-right: 1px solid var(--border);
+  min-width: 0; overflow: hidden;
+}
+/* The rail is a fixed narrow column, so its buttons must be told they cannot
+   grow — a grid item's default min-width is its content, which lets a long
+   label push straight out of the rail and over the pane beside it. */
+.siderail button {
+  font: inherit; font-size: 10px; line-height: 1.15; text-align: center;
+  background: none; border: 0; cursor: pointer; color: var(--text-secondary);
+  padding: 8px 1px; border-radius: 8px; display: grid; gap: 3px; justify-items: center;
+  width: 100%; min-width: 0; overflow: hidden; hyphens: auto;
+}
+.siderail button .tl { min-width: 0; overflow-wrap: anywhere; }
+.siderail button .ic { font-size: 15px; line-height: 1; }
+.siderail button:hover { background: var(--surface-1); color: var(--text-primary); }
+.siderail button.on { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
+.siderail button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* These min-widths were set for a full-width two-column page. In a 380px rail
+   panel they add up to more than the box, so the list scrolls sideways — which
+   on a vertical list is never the right answer. Let the bar absorb the slack. */
+.tabpane .list .row { min-width: 0; }
+.tabpane .row .ext { min-width: 0; max-width: 78px; overflow: hidden; text-overflow: ellipsis; }
+.tabpane .row .num { min-width: 0; padding-left: 8px; }
+.tabpane .row .bar { flex: 1 1 auto; min-width: 30px; }
+
+.sidebody { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 12px 10px; }
+.tabpane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.tabpane[hidden] { display: none; }
+.tabpane .list { flex: 1; min-height: 0; overflow-y: auto; }
+.tabpane .panelhead { margin-bottom: 6px; }
+.tabpane .hint { margin: 0 0 8px; }
+
+/* ── what-to-scan picker ────────────────────────────────────────────────── */
+.picklist { display: grid; gap: 6px; margin: 12px 0 16px; max-height: 320px; overflow-y: auto; }
+.pickrow {
+  display: flex; align-items: center; gap: 11px; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface-1);
+}
+.pickrow:hover { background: var(--plane); }
+.pickrow:has(input:checked) { border-color: var(--brand); background: color-mix(in oklab, var(--brand) 6%, var(--surface-1)); }
+.pickrow input { width: 16px; height: 16px; accent-color: var(--brand); flex: none; }
+.pickrow .nm { display: grid; font-size: 13px; font-weight: 560; color: var(--text-primary); }
+.pickrow .nm small { font-weight: 400; font-size: 11px; color: var(--muted); }
+.pickfoot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Right-click menu. Positioned fixed and appended inside .viz-root so the
+   tokens below actually resolve — see dsOpenMenu. */
+#dsMenu {
+  position: fixed; z-index: 60; min-width: 210px; padding: 4px;
+  background: var(--surface-1); border: 1px solid var(--baseline);
+  border-radius: 8px; box-shadow: var(--shadow); font-size: 12px;
+}
+#dsMenu[hidden] { display: none; }
+#dsMenu .hd {
+  padding: 6px 10px 7px; color: var(--muted); border-bottom: 1px solid var(--border);
+  margin-bottom: 4px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#dsMenu .mi { padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+#dsMenu .mi:hover { background: var(--plane); }
+#dsMenu .mi.danger { color: var(--critical); font-weight: 550; }
+
+/* ── selection ──────────────────────────────────────────────────────────────
+ * A row you can click is a row that must LOOK clickable before it is clicked;
+ * a hover-only affordance is invisible to anyone who never hovers.
+ */
+.list .row.pick { cursor: pointer; }
+.list .row.pick:hover { background: var(--plane); }
+.list .row.pick:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.list .row.sel {
+  background: color-mix(in oklab, var(--gold) 16%, var(--surface-1));
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+
+/* Pinned inside the canvas box so the answer sits ON the map, not below the
+ * fold — the whole point is to look at both at once. */
+.selbar {
+  position: absolute; left: 10px; bottom: 10px; width: min(340px, calc(100% - 20px));
+  max-height: calc(100% - 20px); display: flex; flex-direction: column;
+  background: color-mix(in oklab, var(--surface-1) 94%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .18); overflow: hidden; z-index: 4;
+}
+.selhead {
+  display: flex; align-items: center; gap: 8px; padding: 9px 8px 9px 12px;
+  border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.selhead b { color: var(--text-primary); font-weight: 620; }
+.selnote { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.selx {
+  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; cursor: pointer;
+  background: none; color: var(--text-secondary); font-size: 12px; line-height: 1;
+}
+.selx:hover { background: var(--plane); color: var(--text-primary); }
+.sellist { overflow-y: auto; padding: 4px; }
+.selrow {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font: inherit; font-size: 12px; background: none; border: 0; cursor: pointer;
+  padding: 5px 8px; border-radius: 7px; color: var(--text-primary);
+}
+.selrow:hover { background: var(--plane); }
+.selrow .nm { flex: 1; min-width: 0; }
+.selrow .nm small {
+  display: block; color: var(--muted); font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.selrow .num, .selrow .sz { flex: none; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.selrow .num { min-width: 34px; text-align: right; }
+.selmore { padding: 5px 8px; font-size: 11px; color: var(--muted); }
 
 .crumbs { display: flex; align-items: center; gap: 5px; font-size: 12px; flex-wrap: wrap; min-height: 22px; }
 .crumbs button {
