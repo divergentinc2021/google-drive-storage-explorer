@@ -61,4 +61,6 @@ contextBridge.exposeInMainWorld('desktop', {
   // Kept for the treemap's "reveal" and any single-root caller.
   getRoot: () => ROOTS[0] || null,
   reveal: (p) => ipcRenderer.invoke('revealItem', p),
+  confirmDelete: (info) => ipcRenderer.invoke('confirmDelete', info),
+  writeClipboard: (text) => ipcRenderer.invoke('writeClipboard', text),
 });

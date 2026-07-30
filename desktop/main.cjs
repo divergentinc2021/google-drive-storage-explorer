@@ -12,7 +12,7 @@
  * at the login screen. Shipping the UI and swapping the backend avoids the
  * problem entirely — this build never authenticates with anything.
  */
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
 const path = require('node:path');
 const fsp = require('node:fs/promises');
 
@@ -227,6 +227,39 @@ ipcMain.handle('trashFiles', async (_e, ids) => {
   return { trashed, failed, skipped: [], gated: false };
 });
 
+/**
+ * Native modal confirm for a delete.
+ *
+ * Deliberately not window.confirm: this is the one destructive action in the app,
+ * it should look like the operating system asking rather than like a web page, and
+ * showMessageBox lets the DESTRUCTIVE button be marked and the safe one be the
+ * default — so a stray Enter cancels rather than deletes.
+ */
+ipcMain.handle('confirmDelete', async (_e, info) => {
+  const { name, bytes, isFolder, fileCount } = info || {};
+  const size = bytes >= 1073741824 ? (bytes / 1073741824).toFixed(2) + ' GB'
+    : bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + ' MB'
+    : Math.round((bytes || 0) / 1024) + ' KB';
+  const detail = isFolder
+    ? `The folder and everything inside it (${(fileCount || 0).toLocaleString()} files, ${size}) ` +
+      `goes to the Recycle Bin. You can restore it from there.`
+    : `${size}. It goes to the Recycle Bin, so you can restore it from there.`;
+  const r = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Cancel', 'Move to Recycle Bin'],
+    defaultId: 0,          // Enter cancels
+    cancelId: 0,
+    noLink: true,
+    message: `Move “${name}” to the Recycle Bin?`,
+    detail,
+  });
+  return r.response === 1;
+});
+
 ipcMain.handle('revealItem', async (_e, p) => {
   try { shell.showItemInFolder(p); return true; } catch { return false; }
+});
+
+ipcMain.handle('writeClipboard', async (_e, text) => {
+  try { clipboard.writeText(String(text || '')); return true; } catch { return false; }
 });

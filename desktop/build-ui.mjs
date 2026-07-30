@@ -375,11 +375,161 @@ if (DESKTOP) {
     var a = ev.target && ev.target.closest ? ev.target.closest('a.open') : null;
     if (!a) return;
     ev.preventDefault();
+    ev.stopPropagation();                 // the row itself zooms; the arrow reveals
     var p = a.getAttribute('href');
     if (p && p !== '#') window.desktop.reveal(p);
   }, true);
+
+  /*
+    Click a dead folder, the map zooms to it.
+    This is the pairing the side-by-side layout exists for and a third tab would
+    have ruled out: you read a row on the right and immediately see where that
+    weight sits on the left.
+  */
+  document.addEventListener('click', function (ev) {
+    var row = ev.target && ev.target.closest ? ev.target.closest('#deadList .row') : null;
+    if (!row) return;
+    var a = row.querySelector('a.open');
+    var id = a && a.getAttribute('href');
+    var node = id && DS_BYID ? DS_BYID[id] : null;
+    if (node && typeof dsZoomTo === 'function') dsZoomTo(node);
+  });
+
+  /**
+   * Drop a trashed node and everything under it, then rebuild.
+   *
+   * Trashing a FOLDER removes its whole contents, so the subtree has to leave the
+   * model or the treemap keeps drawing files that no longer exist. ids are paths
+   * here, which makes "is a descendant" a prefix test — but it MUST be anchored on
+   * a separator, or deleting D:\a would also purge D:\ab.
+   *
+   * A named global rather than an inline closure so the destructive path can be
+   * exercised by a test without going through a native modal nobody can click.
+   */
+  window.deskPurgeAfterTrash = function (id) {
+    var pre = String(id).replace(/[\\\\/]+$/, '').toLowerCase();
+    var doomed = DS_ALL.filter(function (x) {
+      var s = String(x.id).toLowerCase();
+      return s === pre || s.indexOf(pre + '\\\\') === 0 || s.indexOf(pre + '/') === 0;
+    });
+    doomed.forEach(function (x) {
+      var i = DS_ALL.indexOf(x);
+      if (i > -1) DS_ALL.splice(i, 1);
+      delete DS_BYID[x.id];
+    });
+    dsBuildTree();
+    DS_STACK = [DS_TREE];
+    tmSetRoot(DS_TREE);
+    dsRenderCrumbs();
+    dsRenderLists();
+    return doomed.length;
+  };
+
+  /* ── right-click a tile ─────────────────────────────────────────────────── */
+  var pvMenu = document.createElement('div');
+  pvMenu.id = 'deskMenu';
+  pvMenu.hidden = true;
+  document.body.appendChild(pvMenu);
+
+  var pvMenuCss = document.createElement('style');
+  pvMenuCss.textContent =
+    '#deskMenu { position: fixed; z-index: 60; min-width: 210px; padding: 4px;' +
+    '  background: var(--surface-1); border: 1px solid var(--baseline); border-radius: 8px;' +
+    '  box-shadow: var(--shadow); font-size: 12px; }' +
+    '#deskMenu .mi { padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }' +
+    '#deskMenu .mi:hover { background: var(--plane); }' +
+    '#deskMenu .mi.danger { color: var(--critical); font-weight: 550; }' +
+    '#deskMenu .hd { padding: 6px 10px 7px; color: var(--muted); border-bottom: 1px solid var(--border);' +
+    '  margin-bottom: 4px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }';
+  document.head.appendChild(pvMenuCss);
+
+  var pvTarget = null;
+  var pvCloseMenu = function () { pvMenu.hidden = true; pvTarget = null; };
+  document.addEventListener('click', pvCloseMenu);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pvCloseMenu(); });
+  window.addEventListener('blur', pvCloseMenu);
+
+  var pvCanvas = document.getElementById('map');
+  if (pvCanvas) {
+    pvCanvas.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault();
+      var n = typeof tmNodeAt === 'function' ? tmNodeAt(ev) : null;
+      if (!n || !n.id || n.synthetic) return;   // rolled-up "N small files" is not a real path
+      pvTarget = n;
+      var isFolder = n.kind === 0;
+      pvMenu.innerHTML =
+        '<div class="hd">' + dsEsc(n.name) + ' · ' + dsEsc(tmFmtBytes(n.bytes)) + '</div>' +
+        '<div class="mi" data-act="reveal">Reveal in File Explorer</div>' +
+        '<div class="mi" data-act="copy">Copy full path</div>' +
+        '<div class="mi danger" data-act="trash">Move to Recycle Bin' +
+        (isFolder ? ' (whole folder)' : '') + '</div>';
+      pvMenu.hidden = false;
+      /* Flip when it would overhang, so the menu never opens off-screen. */
+      var w = pvMenu.offsetWidth, h = pvMenu.offsetHeight;
+      pvMenu.style.left = Math.max(4, Math.min(ev.clientX, window.innerWidth - w - 6)) + 'px';
+      pvMenu.style.top = Math.max(4, Math.min(ev.clientY, window.innerHeight - h - 6)) + 'px';
+    });
+  }
+
+  pvMenu.addEventListener('click', async function (ev) {
+    ev.stopPropagation();
+    var mi = ev.target.closest ? ev.target.closest('.mi') : null;
+    var n = pvTarget;
+    pvCloseMenu();
+    if (!mi || !n) return;
+    var act = mi.dataset.act;
+
+    if (act === 'reveal') { window.desktop.reveal(n.id); return; }
+    if (act === 'copy') { window.desktop.writeClipboard(n.id); return; }
+    if (act !== 'trash') return;
+
+    var ok = await window.desktop.confirmDelete({
+      name: n.name, bytes: n.bytes, isFolder: n.kind === 0, fileCount: n.fileCount || 0,
+    });
+    if (!ok) return;
+
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r.failed && r.failed.length) {
+          dsDialog('<h3>Could not delete</h3><p>' + dsEsc(r.failed[0].error || 'Unknown error') + '</p>');
+          return;
+        }
+        /*
+          Trashing a FOLDER removes everything under it, so the whole subtree has
+          to leave the model or the treemap keeps drawing files that no longer
+          exist. ids are paths here, which makes "is a descendant" a prefix test —
+          anchored on a separator so D:\ab is not treated as a child of D:\a.
+          Then reuse Dashboard's own post-trash refresh.
+        */
+        window.deskPurgeAfterTrash(n.id);
+      })
+      .withFailureHandler(function (e) { dsFail(e); })
+      .trashFiles([n.id]);
+  });
 }
 </script>`;
+
+/*
+  Parse the shim before writing it.
+
+  The shim is a template literal, so every backslash in it is one level of
+  escaping away from what actually ships — `'\\'` here becomes `'\'` in the
+  output, which is an unterminated string that kills the ENTIRE script block, not
+  just the line. The symptom is the whole desktop layer silently not existing,
+  which looks like a layout bug rather than a syntax error. One parse here turns
+  that into a build failure.
+*/
+const shimJs = SHIM.replace(/^[\s\S]*?<script>/, '').replace(/<\/script>[\s\S]*$/, '');
+try {
+  // eslint-disable-next-line no-new-func
+  new Function(shimJs);
+} catch (err) {
+  console.error('\nSHIM FAILED TO PARSE — not writing ui/index.html');
+  console.error(`  ${err.message}`);
+  const m = /line (\d+)/.exec(String(err.stack || ''));
+  if (m) console.error(`  near line ${m[1]} of the shim`);
+  process.exit(1);
+}
 
 mkdirSync(join(HERE, 'ui'), { recursive: true });
 writeFileSync(join(HERE, 'ui', 'index.html'),
