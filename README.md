@@ -67,6 +67,7 @@ apps-script/     the deployed project (clasp root)
   Styles.html    tokens + layout (validated ramps live here)
   Treemap.html   squarified layout, cushion relief + occlusion, canvas renderer
   Dashboard.html app logic, hover detail, quota meter, lists
+chrome-extension/  zero-permission toolbar button that opens the deployed app
 docs/QNAP_SYNC.md
 tools/
   make_ramp.mjs      derives BOTH ramps and prints their metrics (run, don't hand-pick)
