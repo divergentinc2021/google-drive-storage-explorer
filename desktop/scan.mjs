@@ -48,6 +48,27 @@ const MIME_BY_EXT = {
 
 const DAY = 86400000;
 
+/**
+ * Drop any root that sits inside another.
+ *
+ * Picking D:\ and D:\Projects would walk the inner tree twice and inflate every
+ * total — the same mistake storage-mapper guards against, and the premise of a
+ * treemap is that each byte is counted exactly once. Exact duplicates collapse to
+ * one by keeping the lexicographically smaller string, so the result is stable
+ * whatever order the picker returned.
+ */
+export function dedupeRoots(roots) {
+  const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return roots.filter((r) => {
+    const n = norm(r);
+    return !roots.some((o) => {
+      if (o === r) return false;
+      const m = norm(o);
+      return n === m ? String(o) < String(r) : n.startsWith(m + '/');
+    });
+  });
+}
+
 export function classify(name, isDir) {
   if (isDir) return { kind: KIND_FOLDER, mime: 'application/vnd.google-apps.folder' };
   const ext = path.extname(name).toLowerCase();

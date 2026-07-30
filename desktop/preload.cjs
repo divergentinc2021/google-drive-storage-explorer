@@ -19,9 +19,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const METHODS = ['getBootstrap', 'scanChunk', 'measureDriveChunk', 'buildManifestCsv', 'trashFiles'];
 
-// The renderer picks a folder before scanning; remembered here so scanChunk does
-// not need Dashboard.html to learn a new argument.
-let ROOT = null;
+// Chosen before scanning, remembered here so Dashboard.html does not need to
+// learn a new argument for either call that depends on it.
+let ROOTS = [];
 
 function makeRunner(onOk, onErr) {
   const runner = {
@@ -31,8 +31,8 @@ function makeRunner(onOk, onErr) {
   for (const name of METHODS) {
     runner[name] = (...args) => {
       const payload = name === 'scanChunk'
-        ? Object.assign({ root: ROOT }, args[0] || {})
-        : (name === 'getBootstrap' ? ROOT : args[0]);
+        ? Object.assign({ roots: ROOTS }, args[0] || {})
+        : (name === 'getBootstrap' ? ROOTS : args[0]);
       ipcRenderer.invoke(name, payload)
         .then((res) => { if (onOk) onOk(res); })
         .catch((err) => {
@@ -51,7 +51,14 @@ contextBridge.exposeInMainWorld('google', { script: { run: makeRunner(null, null
    it. Dashboard.html feature-detects `window.desktop` so one codebase serves
    both targets. */
 contextBridge.exposeInMainWorld('desktop', {
-  pickRoot: async () => { ROOT = await ipcRenderer.invoke('pickRoot'); return ROOT; },
-  getRoot: () => ROOT,
+  listVolumes: () => ipcRenderer.invoke('listVolumes'),
+  browseFolders: async () => {
+    const picked = await ipcRenderer.invoke('pickRoot');
+    return Array.isArray(picked) ? picked : [];
+  },
+  setRoots: (list) => { ROOTS = Array.isArray(list) ? list.slice() : []; return ROOTS.slice(); },
+  getRoots: () => ROOTS.slice(),
+  // Kept for the treemap's "reveal" and any single-root caller.
+  getRoot: () => ROOTS[0] || null,
   reveal: (p) => ipcRenderer.invoke('revealItem', p),
 });

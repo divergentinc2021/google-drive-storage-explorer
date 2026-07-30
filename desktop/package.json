@@ -1,7 +1,7 @@
 {
   "name": "disk-storage-explorer",
   "productName": "Disk Storage Explorer",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "SpaceSniffer-style treemap for any mounted volume — internal disk, external drive, SD card, network share, or a Google Drive mount.",
   "main": "main.cjs",
   "private": true,

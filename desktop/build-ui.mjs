@@ -62,24 +62,118 @@ if (DESKTOP) {
       'filesystem, and activity from each file\\'s last-modified time.';
   }
 
-  /* Scan has to choose a root first. The web app scans "your Drive"; here there
-     is no implicit subject until the user names one. */
+  /*
+    DESKTOP LAYOUT. The web app is centred at max-width 1560 because it is a page
+    among other pages; an application window is not, and on a wide monitor that
+    left two enormous empty margins around the one element people came to look at.
+    The canvas also had a fixed 600px height, so a maximised window just added
+    whitespace below it instead of a bigger map.
+  */
+  var pvLayout = document.createElement('style');
+  pvLayout.textContent = [
+    '.viz-root { max-width: none !important; padding: 14px 18px 18px !important; }',
+    '.canvasbox { height: clamp(360px, calc(100vh - 430px), 1100px) !important; }',
+    '.list { max-height: clamp(220px, calc(100vh - 620px), 900px) !important; }',
+  ].join('\\n');
+  document.head.appendChild(pvLayout);
+
+  /*
+    Choosing what to scan. The web app scans "your Drive" — there is no implicit
+    subject here, so the app opens on a picker instead of an empty treemap and a
+    button whose meaning you have to guess.
+  */
   var pvBtn = document.getElementById('btnScan');
-  var pvOrig = pvBtn.onclick;
-  pvBtn.textContent = 'Choose folder & scan';
-  pvBtn.addEventListener('click', async function (ev) {
-    if (window.desktop.getRoot()) return;          // already chosen — let the real handler run
-    ev.stopImmediatePropagation();
-    ev.preventDefault();
-    var picked = await window.desktop.pickRoot();
-    if (!picked) return;
-    pvBtn.textContent = 'Scan ' + picked;
-    /* Re-boot now that there is a root: getBootstrap reads the volume with
-       statfs, and until a folder is chosen it has nothing to read, which is why
-       Disk usage sat at "0 B used" for the whole first scan. */
+  pvBtn.textContent = 'Choose what to scan';
+
+  var pvDlg = document.createElement('dialog');
+  pvDlg.id = 'volDlg';
+  pvDlg.innerHTML =
+    '<div class="dlgbody">' +
+      '<h2 style="font-size:15px;margin:0 0 4px">What should I map?</h2>' +
+      '<p class="hint" style="margin:0 0 10px">Tick one or more. They are drawn side by ' +
+      'side in a single treemap, so you can compare them directly.</p>' +
+      '<div id="volList" class="list" style="max-height:320px"></div>' +
+      '<p class="hint" id="volWarn" style="margin:10px 0 0"></p>' +
+    '</div>' +
+    '<form method="dialog" style="display:flex;gap:8px;justify-content:flex-end">' +
+      '<button class="btn ghost" id="volBrowse" value="browse">Choose a folder…</button>' +
+      '<button class="btn ghost" value="cancel">Cancel</button>' +
+      '<button class="btn primary" id="volGo" value="go">Scan</button>' +
+    '</form>';
+  document.body.appendChild(pvDlg);
+
+  var pvExtra = [];   // folders added via the browse button
+
+  var pvFmt = function (b) { return typeof tmFmtBytes === 'function' ? tmFmtBytes(b) : b + ' B'; };
+
+  async function pvFillVolumes() {
+    var vols = await window.desktop.listVolumes();
+    var chosen = window.desktop.getRoots();
+    var rows = vols.map(function (v) {
+      var used = v.total - v.free;
+      var pct = v.total ? Math.round(100 * used / v.total) : 0;
+      return '<label class="row pick" style="cursor:pointer">' +
+        '<input type="checkbox" value="' + v.path.replace(/"/g, '&quot;') + '"' +
+        (chosen.indexOf(v.path) >= 0 ? ' checked' : '') + '>' +
+        '<span class="nm"><b>' + v.path + '</b><small>' + pvFmt(used) + ' of ' +
+        pvFmt(v.total) + ' used · ' + pct + '%</small></span>' +
+        '<span class="sz">' + pvFmt(v.free) + ' free</span></label>';
+    });
+    rows = rows.concat(pvExtra.map(function (p) {
+      return '<label class="row pick" style="cursor:pointer">' +
+        '<input type="checkbox" value="' + p.replace(/"/g, '&quot;') + '" checked>' +
+        '<span class="nm"><b>' + p + '</b><small>folder</small></span></label>';
+    }));
+    document.getElementById('volList').innerHTML = rows.join('') ||
+      '<div class="empty-list">No volumes found.</div>';
+    pvSyncWarn();
+  }
+
+  /* A whole system drive is millions of entries, and the renderer holds one
+     object per file. Say so before the scan rather than after it runs out of
+     memory. */
+  function pvSyncWarn() {
+    var boxes = pvDlg.querySelectorAll('input:checked');
+    var big = [].some.call(boxes, function (b) { return /^[A-Za-z]:\\\\?$/.test(b.value); });
+    document.getElementById('volWarn').innerHTML = big
+      ? '<b>Scanning a whole drive can take a while</b> and uses memory in proportion ' +
+        'to the number of files. Pick a folder instead if you only care about one project.'
+      : '';
+    document.getElementById('volGo').disabled = boxes.length === 0;
+  }
+  pvDlg.addEventListener('change', pvSyncWarn);
+
+  document.getElementById('volBrowse').addEventListener('click', async function (ev) {
+    ev.preventDefault();                      // keep the dialog open
+    var picked = await window.desktop.browseFolders();
+    picked.forEach(function (p) { if (pvExtra.indexOf(p) < 0) pvExtra.push(p); });
+    await pvFillVolumes();
+  });
+
+  pvDlg.addEventListener('close', function () {
+    if (pvDlg.returnValue !== 'go') return;
+    var roots = [].map.call(pvDlg.querySelectorAll('input:checked'), function (b) { return b.value; });
+    if (!roots.length) return;
+    window.desktop.setRoots(roots);
+    pvBtn.textContent = roots.length === 1 ? 'Rescan ' + roots[0] : 'Rescan ' + roots.length + ' locations';
+    /* Re-boot now that there are roots: getBootstrap reads them with statfs, and
+       before anything is chosen it has nothing to measure — which is why Disk
+       usage sat at "0 B used" for the whole of the first scan. */
     google.script.run.withSuccessHandler(dsOnBoot).getBootstrap();
     pvBtn.click();
+  });
+
+  function pvOpenPicker() { pvFillVolumes().then(function () { pvDlg.showModal(); }); }
+
+  pvBtn.addEventListener('click', function (ev) {
+    if (window.desktop.getRoots().length) return;   // chosen already — let the real scan run
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    pvOpenPicker();
   }, true);
+
+  /* Open on the picker rather than on an empty treemap. */
+  window.addEventListener('load', function () { setTimeout(pvOpenPicker, 250); });
 
   var pvQuota = document.getElementById('quotaPanel');
   if (pvQuota) pvQuota.querySelector('h2').textContent = 'Disk usage';
@@ -154,7 +248,10 @@ if (DESKTOP) {
   */
   var pvSetRoot = window.tmSetRoot;
   window.tmSetRoot = function (node) {
-    if (node && node.id === '__root__') node.name = window.desktop.getRoot() || 'Scanned';
+    if (node && node.id === '__root__') {
+      var rs = window.desktop.getRoots();
+      node.name = rs.length === 1 ? rs[0] : (rs.length ? rs.length + ' locations' : 'Scanned');
+    }
     return pvSetRoot.apply(this, arguments);
   };
 
