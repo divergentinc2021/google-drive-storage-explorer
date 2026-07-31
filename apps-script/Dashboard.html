@@ -1481,8 +1481,21 @@ function dsBigCandidates() {
 }
 
 function dsRenderBig() {
-  var rows = dsBigCandidates().slice(0, 300);
+  var all = dsBigCandidates();
+  var rows = all.slice(0, 300);
   var el = document.getElementById('bigList');
+
+  // The rail badge and the heading carry the size, because this is the one list
+  // that answers "how much would this actually free".
+  var bytes = all.reduce(function (a, n) { return a + (n.bytes || 0); }, 0);
+  var badge = document.getElementById('bigCount');
+  if (badge) {
+    badge.hidden = !all.length;
+    badge.textContent = all.length > 999 ? '999+' : String(all.length);
+  }
+  var hd = document.getElementById('bigBytes');
+  if (hd) hd.textContent = all.length ? '· ' + tmFmtBytes(bytes) : '';
+
   if (!rows.length) { el.innerHTML = '<div class="empty-list">Nothing idle past this threshold.</div>'; return; }
   // A <label> would hijack the open-link click into a checkbox toggle, so the
   // row is a div and the toggle is wired explicitly.
@@ -1520,9 +1533,14 @@ function dsUpdateTrashBtn() {
   var btn = document.getElementById('btnTrash');
   btn.disabled = !ids.length;
   var bytes = ids.reduce(function (a, id) { return a + ((DS_BYID[id] || {}).bytes || 0); }, 0);
+  // Short, because this now lives in a 380px rail rather than a full-width bar.
+  // The confirm dialog still spells out that it is the Drive trash and reversible.
   btn.textContent = ids.length
-    ? 'Move ' + ids.length + ' file' + (ids.length > 1 ? 's' : '') + ' (' + tmFmtBytes(bytes) + ') to Drive trash'
-    : 'Move selected to Drive trash';
+    ? 'Trash ' + ids.length + ' · ' + tmFmtBytes(bytes)
+    : 'Trash selected';
+  btn.title = ids.length
+    ? 'Move ' + ids.length + ' file(s) to the Drive trash — reversible, kept 30 days'
+    : 'Tick the files you want moved to the Drive trash';
 }
 
 /*
