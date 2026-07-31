@@ -1711,25 +1711,25 @@ function dsRenderApps() {
       '<span class="appcard">' +
         '<b>' + dsEsc(a.full) + ' <span class="av">' + dsEsc(a.version) + '</span></b>' +
         '<span class="ad">' + dsEsc(a.desc) + '</span>' +
-        '<span class="al">' +
         /*
-         * target="_blank" is not decoration here. This page runs inside Apps
-         * Script's sandboxed iframe, which blocks top-level navigation, so a
-         * same-tab link to github.com fails outright — reported as "refused to
-         * connect". The `download` attribute did not help either: it is ignored
-         * for cross-origin URLs, so it only removed the target that was working.
+         * target="_blank" everywhere. This page runs inside Apps Script's
+         * sandboxed iframe, which blocks top-level navigation, so a same-tab
+         * link fails outright — that was the "refused to connect". The download
+         * attribute does not help either: it is ignored cross-origin.
          */
-          '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download the installer</a>' +
+        '<span class="al">' +
+          (a.drive
+            ? '<a href="' + dsEsc(a.drive) + '" target="_blank" rel="noopener">⤓ Download the installer</a>'
+            : '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">⤓ Get it from GitHub</a>') +
           '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
-          (a.releases
-            ? '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">All releases</a>'
-            : '') +
         '</span>' +
-        // The direct link names a version, so it 404s if the constant on the
-        // server goes stale. "All releases" above is the escape hatch, and
-        // naming the file makes a wrong one obvious rather than puzzling.
-        '<span class="an-note">' + dsEsc(a.asset || '') +
-        ' — needs access to the private <code>divergentinc2021</code> repo.</span>' +
+        '<span class="an-note">' +
+        (a.drive
+          ? dsEsc(a.asset || '') + ' — shared with everyone at uwc.ac.za.'
+          : 'Not published to Drive yet, so this link goes to GitHub — which needs ' +
+            'access to the private <code>divergentinc2021</code> repo. Ask Laurent to run ' +
+            '<code>publishInstaller(\'' + dsEsc(a.key) + '\')</code>.') +
+        '</span>' +
       '</span></span>';
   }).join('');
 }

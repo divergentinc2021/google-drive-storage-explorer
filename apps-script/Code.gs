@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v24';
+var APP_VERSION = 'v25';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -81,15 +81,90 @@ var SIBLING_APPS_RAW = [
   }
 ];
 
+/*
+ * GITHUB CANNOT BE THE DOWNLOAD CHANNEL, and the 404 proved it.
+ *
+ * Both repos are private, and GitHub answers a private release asset with 404
+ * rather than 403 — it will not even admit the file exists. The URL was right;
+ * it matched GitHub's own browser_download_url exactly. The audience is wrong:
+ * the people clicking these chips are uwc.ac.za Google users, most of whom have
+ * no GitHub account on this org at all. No amount of link-building fixes that.
+ *
+ * So the installer is served from Drive, which every one of them already has
+ * and which this app already talks to. GitHub stays as a secondary link for
+ * whoever does have repo access.
+ *
+ * publishInstaller() is owner-only and deliberate, exactly like publishFavicon:
+ * it shares a file with the domain, and nothing here does that on its own.
+ */
+var PROP_INSTALLERS = 'SS_INSTALLERS';
+
+function installers_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(PROP_INSTALLERS) || '{}'); }
+  catch (e) { return {}; }
+}
+
+/**
+ * Point a chip at an installer you have uploaded to Drive.
+ *
+ * Upload the .exe anywhere in your Drive, then run publishInstaller('mapper')
+ * — it finds the file by the exact name the version implies, shares it with the
+ * domain, and records it. Pass a file id as the second argument to skip the
+ * search.
+ *
+ * Run again after every release: the filename carries the version, so a new
+ * release needs the new .exe uploaded and this re-run.
+ */
+function publishInstaller(key, fileId) {
+  if (!isOwner_()) throw new Error('Only ' + OWNERS.join(', ') + ' may publish installers.');
+  var spec = null;
+  SIBLING_APPS_RAW.forEach(function (a) { if (a.key === key) spec = a; });
+  if (!spec) throw new Error('Unknown app: ' + key + '. Try ' +
+    SIBLING_APPS_RAW.map(function (a) { return a.key; }).join(' or ') + '.');
+
+  var wanted = spec.assetTpl.replace('{v}', spec.version);
+  var file = null;
+  if (fileId) {
+    file = DriveApp.getFileById(fileId);
+  } else {
+    var it = DriveApp.getFilesByName(wanted);
+    if (!it.hasNext()) {
+      throw new Error('No file named "' + wanted + '" in your Drive. Upload the installer ' +
+        'first, or pass its file id as the second argument.');
+    }
+    file = it.next();
+    if (it.hasNext()) {
+      throw new Error('More than one file named "' + wanted + '" — pass the file id you mean.');
+    }
+  }
+
+  file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+  var all = installers_();
+  all[key] = { id: file.getId(), version: spec.version, name: file.getName() };
+  PropertiesService.getScriptProperties().setProperty(PROP_INSTALLERS, JSON.stringify(all));
+  return { ok: true, key: key, file: file.getName(), id: file.getId(),
+           url: 'https://drive.google.com/file/d/' + file.getId() + '/view' };
+}
+
 function siblingApps_() {
+  var pub = installers_();
   return SIBLING_APPS_RAW.map(function (a) {
     var tag = a.tagTpl.replace('{v}', a.version);
     var asset = a.assetTpl.replace('{v}', a.version);
+    var mine = pub[a.key];
+    /*
+     * Only trust a published installer that matches the version being
+     * advertised. After a release the constant moves first and the upload
+     * follows, and serving last release's .exe under this release's number
+     * would be worse than sending someone to GitHub.
+     */
+    var fresh = mine && mine.version === a.version ? mine : null;
     return {
       key: a.key, name: a.name, full: a.full, desc: a.desc,
       version: 'v' + a.version,
-      download: 'https://github.com/' + a.repo + '/releases/download/' + tag + '/' + asset,
       asset: asset,
+      drive: fresh ? 'https://drive.google.com/file/d/' + fresh.id + '/view' : '',
+      github: 'https://github.com/' + a.repo + '/releases/download/' + tag + '/' + asset,
       releases: 'https://github.com/' + a.repo + '/releases',
       readme: a.readme
     };
