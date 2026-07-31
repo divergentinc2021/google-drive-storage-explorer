@@ -207,6 +207,23 @@ function dsScan() {
   dsLogStart();
   dsLog('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') +
         '. Drive is listed a page at a time, so the first answer is the slowest.');
+
+  /*
+   * Fired here, alongside the crawl, not after it. It needs nothing from the
+   * scan, and the scan takes long enough that this is finished and waiting by
+   * the time the map is drawn — so the tile shows the right count immediately
+   * instead of correcting itself a few seconds later.
+   */
+  DS_CONV_NAMES = null;
+  var convT0 = Date.now();
+  dsFetchConvertedNames(function () {
+    dsLog('Checked what is already converted (' +
+          ((Date.now() - convT0) / 1000).toFixed(1) + 's) — ' +
+          (DS_CONV_NAMES ? Object.keys(DS_CONV_NAMES).length.toLocaleString() + ' file(s) in ' +
+            'My Drive → _Converted for NAS' : 'nothing converted yet'));
+    if (!DS_SCANNING) dsApplyConvStatus();   // scan already finished; repaint now
+  });
+
   dsScanTarget(0, 0);
 }
 
@@ -330,11 +347,13 @@ function dsScanDone() {
   dsLog('All pages in. Building the tree and laying out ' +
         DS_ALL.length.toLocaleString() + ' items…');
 
-  dsCheckConverted();   // async; the banner repaints when it answers
   dsBuildTree();
   DS_STACK = [DS_TREE];
   tmSetRoot(DS_TREE);
   dsRenderCrumbs();
+  // If the parallel check has already answered, the tile shows the real count
+  // on its first paint. If not, its callback repaints when it lands.
+  DS_CONV_STATUS = dsComputeConvStatus();
   dsRenderTiles();
   dsRenderLists();
   document.getElementById('legend').innerHTML = tmLegendHtml();
@@ -865,21 +884,70 @@ var DS_CONV_STATUS = null;   // {converted, pending} from the server, or null
 function dsRenderConvBanner() { dsRenderNativeTile(); }
 
 /*
- * Ask the server what is already done, then re-render. Deliberately AFTER the
- * first paint: it walks the destination tree, so it is slower than everything
- * else on the page and must not hold the map up.
+ * The converted-file names, fetched ONCE and compared locally.
+ *
+ * This used to be a server call that took the native ids and did a
+ * Drive.Files.get for each of them — 161 round trips asking Drive for a name
+ * and a mimeType the scan had already collected. It also could not start until
+ * the scan finished, so the tile sat on the wrong number and the answer only
+ * arrived after a visible pause.
+ *
+ * Now the server returns only what the client cannot know (what is in the
+ * destination folder) and the comparison happens here against DS_ALL. Nothing
+ * in it depends on the scan, so it is fired the moment Scan is pressed and is
+ * normally waiting by the time the crawl ends.
  */
-function dsCheckConverted() {
-  var ids = dsNativeIds();
-  if (!ids.length) { DS_CONV_STATUS = null; return; }
+var DS_CONV_NAMES = null;   // { 'Plan.docx': 1, … } or null until it answers
+
+function dsFetchConvertedNames(then) {
   google.script.run
-    .withSuccessHandler(function (st) {
-      DS_CONV_STATUS = st;
-      dsRenderTiles();     // the count and the action both live on the tile
-      dsRenderClasses();
+    .withSuccessHandler(function (r) {
+      if (!r || !r.checked) { DS_CONV_NAMES = null; if (then) then(); return; }
+      var set = {};
+      (r.names || []).forEach(function (n) { set[n] = 1; });
+      DS_CONV_NAMES = set;
+      if (then) then();
     })
-    .withFailureHandler(function () { /* leave the banner on scan counts */ })
-    .conversionStatus(ids);
+    .withFailureHandler(function () { DS_CONV_NAMES = null; if (then) then(); })
+    .convertedNames();
+}
+
+/** Every extension Google offers for this native type, not just the preferred one. */
+function dsCandidateExts(mime) {
+  if (!mime || mime.indexOf('application/vnd.google-apps.') !== 0) return [];
+  var offered = DS_BOOT && DS_BOOT.exportFormats ? DS_BOOT.exportFormats[mime.slice(28)] : null;
+  if (!offered) return [];
+  var out = [];
+  offered.forEach(function (m) {
+    var e = MIME_EXT[m];
+    if (e && out.indexOf(e) === -1) out.push(e);
+  });
+  return out;
+}
+
+/** Converted vs pending, computed from the scan — no further server calls. */
+function dsComputeConvStatus() {
+  if (!DS_CONV_NAMES) return null;
+  var converted = 0, pending = 0;
+  DS_ALL.forEach(function (n) {
+    if (n.kind !== KIND_NATIVE || !n.mime || n.synthetic) return;
+    var exts = dsCandidateExts(n.mime);
+    if (!exts.length) return;                 // impossible, so neither
+    var done = exts.some(function (e) { return DS_CONV_NAMES[n.name + '.' + e]; });
+    if (done) converted++; else pending++;
+  });
+  return { checked: true, converted: converted, pending: pending };
+}
+
+function dsApplyConvStatus() {
+  DS_CONV_STATUS = dsComputeConvStatus();
+  dsRenderTiles();     // the count and the action both live on the tile
+  dsRenderClasses();
+}
+
+/** Re-read the destination and repaint — used after a conversion run. */
+function dsCheckConverted() {
+  dsFetchConvertedNames(dsApplyConvStatus);
 }
 
 /*
@@ -1644,7 +1712,14 @@ function dsRenderApps() {
         '<b>' + dsEsc(a.full) + ' <span class="av">' + dsEsc(a.version) + '</span></b>' +
         '<span class="ad">' + dsEsc(a.desc) + '</span>' +
         '<span class="al">' +
-          '<a href="' + dsEsc(a.download) + '" download>⤓ Download the installer</a>' +
+        /*
+         * target="_blank" is not decoration here. This page runs inside Apps
+         * Script's sandboxed iframe, which blocks top-level navigation, so a
+         * same-tab link to github.com fails outright — reported as "refused to
+         * connect". The `download` attribute did not help either: it is ignored
+         * for cross-origin URLs, so it only removed the target that was working.
+         */
+          '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download the installer</a>' +
           '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
           (a.releases
             ? '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">All releases</a>'
