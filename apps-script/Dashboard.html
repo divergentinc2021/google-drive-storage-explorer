@@ -117,6 +117,7 @@ function dsInit() {
     if (ev.key === 'Escape' && DS_SEL) dsClearSel();
   });
   document.getElementById('btnConvert').addEventListener('click', dsOpenConvert);
+  document.getElementById('scanClose').addEventListener('click', dsScanDlgClose);
   TM_AFTER_RENDER = dsResolveSel;
 
   // Right-click a tile. Bound once, here, so no build ends up with two menus.
@@ -188,9 +189,23 @@ function dsOnBoot(b) {
 
 function dsFail(err) {
   DS_SCANNING = false;
-  document.getElementById('progress').hidden = true;
   document.getElementById('btnScan').disabled = false;
-  dsDialog('<h3>Something went wrong</h3><pre>' + dsEsc(String(err && err.message || err)) + '</pre>');
+  var msg = String(err && err.message || err);
+
+  /*
+   * If the scan dialog is up, keep the failure INSIDE it. The log is the record
+   * of how far it got and what Drive last said, and opening a second modal over
+   * it would hide exactly that. Only fall back to the generic dialog when the
+   * failure came from somewhere else.
+   */
+  dsCreepStop();   // nothing is in flight any more
+  var d = document.getElementById('scanDlg');
+  if (d && d.open) {
+    dsLog(msg, 'bad');
+    dsScanDlgHold('Scan failed');
+    return;
+  }
+  dsDialog('<h3>Something went wrong</h3><pre>' + dsEsc(msg) + '</pre>');
 }
 
 // ── scan ────────────────────────────────────────────────────────────────────
@@ -199,11 +214,11 @@ function dsScan() {
   DS_SCANNING = true;
   DS_ALL = []; DS_BYID = {}; DS_MIMES = []; DS_STACK = [];
   document.getElementById('btnScan').disabled = true;
-  document.getElementById('progress').hidden = false;
   document.getElementById('mapEmpty').hidden = true;
   dsProgress(0, 'Starting…');
 
   if (!DS_TARGETS.length) DS_TARGETS = [dsScopeTarget()];
+  dsScanDlgOpen('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') + '…');
   dsLogStart();
   dsLog('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') +
         '. Drive is listed a page at a time, so the first answer is the slowest.');
@@ -256,6 +271,13 @@ function dsScanStep(opts, seen, ti) {
   var page = (opts.pageToken ? 'next page' : 'first page');
   dsLog('Asking Drive for the ' + page + ' of ' + DS_TARGETS[ti].name + '…');
   var t0 = Date.now();
+  /*
+   * Creep from wherever the bar is toward the next real milestone. The ceiling
+   * is deliberately short of it: arriving before the answer does would be a
+   * lie, and the snap when the answer lands is the honest signal.
+   */
+  var barNow = parseFloat(document.getElementById('progBar').style.width) || 5;
+  dsCreepStart(barNow, Math.min(94, barNow + 22));
   google.script.run
     .withSuccessHandler(function (res) {
       dsLog('Drive answered in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's — ' +
@@ -311,11 +333,40 @@ function dsScanStep(opts, seen, ti) {
  */
 var DS_LOG_T0 = 0, DS_LOG_N = 0;
 
+/*
+ * The scan dialog. Open while it runs, gone when it succeeds.
+ *
+ * On FAILURE it stays open with a Close button: the log is then the only record
+ * of what happened, and closing it automatically would throw away the one thing
+ * worth reading.
+ */
+function dsScanDlgOpen(title) {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  document.getElementById('scanTitle').textContent = title || 'Scanning…';
+  document.getElementById('scanFoot').hidden = true;
+  if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+}
+
+function dsScanDlgClose() {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  if (d.close) d.close(); else d.removeAttribute('open');
+}
+
+/** Leave it up, with a way out — used when something went wrong. */
+function dsScanDlgHold(title) {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  document.getElementById('scanTitle').textContent = title;
+  document.getElementById('scanFoot').hidden = false;
+}
+
 function dsLogStart() {
   DS_LOG_T0 = Date.now();
   DS_LOG_N = 0;
   var el = document.getElementById('runLog');
-  if (el) { el.innerHTML = ''; el.hidden = false; }
+  if (el) el.innerHTML = '';
 }
 
 function dsLog(text, cls) {
@@ -330,12 +381,47 @@ function dsLog(text, cls) {
   el.scrollTop = el.scrollHeight;
 }
 
-function dsLogDone() {
-  var el = document.getElementById('runLog');
-  if (el) el.hidden = false;   // kept visible: it is the record of what happened
+
+/*
+ * ── the bar has to move while nothing is happening ──────────────────────────
+ *
+ * Drive's first page took 58 seconds on a real account, and for all of it the
+ * bar sat at 5% with one unchanging line under it. There is genuinely no
+ * progress to report during that wait — the request is out and Google has not
+ * answered — but a frozen bar is indistinguishable from a frozen app.
+ *
+ * So it creeps: each tick closes a fixed fraction of the gap to a CEILING it
+ * never reaches. Always moving, always slowing, and it cannot overstate how far
+ * along things are, because it can never arrive. A real answer stops it and
+ * snaps the bar to the true figure.
+ */
+var DS_CREEP = null, DS_CREEP_V = 0, DS_CREEP_T0 = 0, DS_CREEP_SAID = 0;
+
+function dsCreepStop() {
+  if (DS_CREEP) { clearInterval(DS_CREEP); DS_CREEP = null; }
+}
+
+function dsCreepStart(from, ceiling) {
+  dsCreepStop();
+  DS_CREEP_V = from;
+  DS_CREEP_T0 = Date.now();
+  DS_CREEP_SAID = 0;
+  DS_CREEP = setInterval(function () {
+    DS_CREEP_V += (ceiling - DS_CREEP_V) * 0.05;
+    var el = document.getElementById('progBar');
+    if (el) el.style.width = DS_CREEP_V.toFixed(1) + '%';
+
+    // A line every 15s, so the log shows life too rather than one frozen entry.
+    var secs = Math.floor((Date.now() - DS_CREEP_T0) / 1000);
+    if (secs >= 15 && secs - DS_CREEP_SAID >= 15) {
+      DS_CREEP_SAID = secs;
+      dsLog('still waiting on Drive — ' + secs + 's so far', 'dim');
+    }
+  }, 300);
 }
 
 function dsProgress(pct, txt) {
+  dsCreepStop();   // a real figure supersedes the estimate
   document.getElementById('progBar').style.width = pct + '%';
   document.getElementById('progText').textContent = txt;
 }
@@ -357,7 +443,8 @@ function dsScanDone() {
   dsRenderTiles();
   dsRenderLists();
   document.getElementById('legend').innerHTML = tmLegendHtml();
-  setTimeout(function () { document.getElementById('progress').hidden = true; }, 900);
+  // A short beat so the last line is readable, then out of the way entirely.
+  setTimeout(dsScanDlgClose, 700);
 }
 
 // ── tree ────────────────────────────────────────────────────────────────────

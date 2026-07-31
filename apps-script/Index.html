@@ -53,13 +53,27 @@
     </div>
   </header>
 
-  <div class="progress" id="progress" hidden>
-    <div class="bar"><i id="progBar"></i></div>
-    <span id="progText">Scanning…</span>
-  </div>
-  <!-- What is actually happening, with elapsed times. A bar alone cannot tell
-       "Drive has not answered yet" apart from "nothing is happening". -->
-  <div class="runlog" id="runLog" hidden></div>
+  <!--
+    The bar and the log belong to the scan, so they live in a dialog that opens
+    with it and closes when it finishes. They used to sit permanently at the top
+    of the page, which pushed the dashboard down for the rest of the session to
+    report something that was over in a minute.
+
+    The log still matters WHILE it runs — a bar alone cannot tell "Drive has not
+    answered yet" apart from "nothing is happening" — and on a failure it is the
+    only record of what happened, so the dialog stays open in that case.
+  -->
+  <dialog id="scanDlg" class="scandlg">
+    <h3 id="scanTitle">Scanning…</h3>
+    <div class="progress" id="progress">
+      <div class="bar"><i id="progBar"></i></div>
+      <span id="progText">Scanning…</span>
+    </div>
+    <div class="runlog" id="runLog"></div>
+    <div class="dlgrow" id="scanFoot" hidden>
+      <button class="btn" id="scanClose">Close</button>
+    </div>
+  </dialog>
 
   <section class="panel quota" id="quotaPanel">
     <div class="panelhead">
