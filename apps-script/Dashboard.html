@@ -1155,6 +1155,7 @@ function dsRenderSelBar(kind, key, count, bytes, folders, tileCount) {
  * thing anyone should be able to do is read the list and decline.
  */
 var DS_CONV_QUEUE = [], DS_CONV_DONE = 0, DS_CONV_FAILED = [], DS_CONV_SKIPPED = 0;
+var DS_CONV_FELLBACK = 0;
 
 function dsNativeIds() {
   return DS_ALL.filter(function (n) {
@@ -1213,7 +1214,7 @@ function dsShowConvertPlan(p) {
   if (conv.length) {
     document.getElementById('convGo').addEventListener('click', function () {
       DS_CONV_QUEUE = conv.map(function (c) { return c.id; });
-      DS_CONV_DONE = 0; DS_CONV_FAILED = []; DS_CONV_SKIPPED = 0;
+      DS_CONV_DONE = 0; DS_CONV_FAILED = []; DS_CONV_SKIPPED = 0; DS_CONV_FELLBACK = 0;
       dsRunConvert();
     });
   }
@@ -1235,6 +1236,7 @@ function dsRunConvert() {
   google.script.run
     .withSuccessHandler(function (r) {
       DS_CONV_DONE += (r.done || []).length;
+      DS_CONV_FELLBACK += (r.done || []).filter(function (d) { return d.fellBack; }).length;
       DS_CONV_SKIPPED += (r.skipped || []).length;
       DS_CONV_FAILED = DS_CONV_FAILED.concat(r.failed || []);
       DS_CONV_QUEUE = r.remaining || [];
@@ -1248,6 +1250,8 @@ function dsRunConvert() {
 function dsConvertDone() {
   dsDialog('<h3>Conversion finished</h3>' +
     '<div class="note"><b>' + DS_CONV_DONE.toLocaleString() + '</b> file(s) converted' +
+    (DS_CONV_FELLBACK ? ' (<b>' + DS_CONV_FELLBACK + '</b> in a lighter format, because the ' +
+      'preferred one was over Google\'s export limit)' : '') +
     (DS_CONV_SKIPPED ? ' · <b>' + DS_CONV_SKIPPED.toLocaleString() + '</b> already done' : '') +
     (DS_CONV_FAILED.length ? ' · <b>' + DS_CONV_FAILED.length.toLocaleString() + '</b> could not be' : '') +
     '</div>' +
