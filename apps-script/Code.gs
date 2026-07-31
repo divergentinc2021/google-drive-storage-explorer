@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v14';
+var APP_VERSION = 'v15';
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -449,7 +449,14 @@ function getVerifiedIds() {
  * ADDITIVE ONLY. It creates files; it never modifies, moves or trashes one, and
  * it skips anything already converted, so running it twice is safe.
  */
-var CONVERT_BUDGET_MS = 4.5 * 60 * 1000;  // Apps Script kills at 6; leave room to return
+/*
+ * Apps Script kills a call at 6 minutes, so a batch has to return before then.
+ * 90 seconds rather than 4.5 minutes: a single call cannot report progress
+ * while it runs, so the batch length IS the update interval, and the first
+ * screen sat on "0 of 161 done" long enough to look hung. Shorter batches cost
+ * a few more round trips and buy visible movement.
+ */
+var CONVERT_BUDGET_MS = 90 * 1000;
 
 /** Extension for an export mime, or null if we would not know what to call it. */
 function extForMime_(mime) {
@@ -463,7 +470,13 @@ function extForMime_(mime) {
     'application/pdf': 'pdf', 'text/csv': 'csv', 'image/svg+xml': 'svg',
     'image/png': 'png', 'image/jpeg': 'jpg', 'text/plain': 'txt',
     'application/vnd.google-apps.script+json': 'json',
-    'application/zip': 'zip', 'video/mp4': 'mp4', 'text/html': 'html'
+    'application/zip': 'zip', 'video/mp4': 'mp4', 'text/html': 'html',
+    // Rungs on the size-fallback ladder. Missing entries are not cosmetic:
+    // an unmapped format is dropped from the candidate list, so a Doc too big
+    // as .docx skipped straight past .rtf. Found by the ladder test.
+    'application/rtf': 'rtf', 'text/rtf': 'rtf',
+    'text/tab-separated-values': 'tsv', 'application/epub+zip': 'epub',
+    'application/x-vnd.oasis.opendocument.spreadsheet': 'ods'
   };
   return MAP[mime] || null;
 }
@@ -473,15 +486,27 @@ function extForMime_(mime) {
  * keeping. Returns null when Google offers none — in which case the file simply
  * cannot be converted and saying so is the only honest answer.
  */
-function chooseExport_(mime, exportFormats) {
+/*
+ * Every format Google offers for this type, best first.
+ *
+ * A LIST rather than one choice, because Drive refuses to export anything over
+ * roughly 10 MB and the limit applies to the produced file — so a Doc too big
+ * as .docx often fits as .pdf, and nearly always as .txt. Giving up at the
+ * first refusal threw away files that were perfectly exportable in a lighter
+ * format. The order is "most faithful first", so a fallback is only ever
+ * reached after the better one has actually been refused.
+ */
+function exportCandidates_(mime, exportFormats) {
   var offered = exportFormats[mime] || [];
   var PREF = {
-    'application/vnd.google-apps.document': ['docx', 'odt', 'pdf'],
-    'application/vnd.google-apps.spreadsheet': ['xlsx', 'ods', 'csv'],
-    'application/vnd.google-apps.presentation': ['pptx', 'odp', 'pdf'],
-    'application/vnd.google-apps.drawing': ['svg', 'png', 'pdf'],
+    'application/vnd.google-apps.document': ['docx', 'odt', 'rtf', 'pdf', 'txt'],
+    'application/vnd.google-apps.spreadsheet': ['xlsx', 'ods', 'csv', 'tsv'],
+    'application/vnd.google-apps.presentation': ['pptx', 'odp', 'pdf', 'txt'],
+    'application/vnd.google-apps.drawing': ['svg', 'png', 'pdf', 'jpg'],
     'application/vnd.google-apps.script': ['json'],
     'application/vnd.google-apps.jam': ['pdf'],
+    'application/vnd.google-apps.site': ['txt', 'html'],
+    'application/vnd.google-apps.form': ['zip'],
     'application/vnd.google-apps.vid': ['mp4']
   };
   var byExt = {};
@@ -489,12 +514,44 @@ function chooseExport_(mime, exportFormats) {
     var e = extForMime_(m);
     if (e && !byExt[e]) byExt[e] = m;
   });
-  var want = PREF[mime] || [];
-  for (var i = 0; i < want.length; i++) {
-    if (byExt[want[i]]) return { mime: byExt[want[i]], ext: want[i] };
-  }
-  var keys = Object.keys(byExt);
-  return keys.length ? { mime: byExt[keys[0]], ext: keys[0] } : null;
+  var out = [], seen = {};
+  (PREF[mime] || []).forEach(function (e) {
+    if (byExt[e]) { out.push({ mime: byExt[e], ext: e }); seen[e] = 1; }
+  });
+  Object.keys(byExt).forEach(function (e) {
+    if (!seen[e]) out.push({ mime: byExt[e], ext: e });
+  });
+  return out;
+}
+
+function chooseExport_(mime, exportFormats) {
+  var c = exportCandidates_(mime, exportFormats);
+  return c.length ? c[0] : null;
+}
+
+/*
+ * The type to UPLOAD the result as, which is not always the type it was
+ * exported as. Apps Script exports with mime application/vnd.google-apps.script
+ * +json, and Drive refuses to create a file from uploaded content carrying any
+ * google-apps type — "Invalid MIME type provided for the uploaded content".
+ * Eight Sites and Apps Script projects failed exactly there. Deriving the
+ * upload type from the EXTENSION keeps it to types Drive will accept.
+ */
+function uploadMimeFor_(ext) {
+  var M = {
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    odt: 'application/vnd.oasis.opendocument.text',
+    ods: 'application/vnd.oasis.opendocument.spreadsheet',
+    odp: 'application/vnd.oasis.opendocument.presentation',
+    pdf: 'application/pdf', csv: 'text/csv', tsv: 'text/tab-separated-values',
+    txt: 'text/plain', rtf: 'application/rtf', html: 'text/html',
+    tsv: 'text/tab-separated-values', epub: 'application/epub+zip',
+    json: 'application/json', zip: 'application/zip',
+    svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', mp4: 'video/mp4'
+  };
+  return M[ext] || 'application/octet-stream';
 }
 
 /**
@@ -616,12 +673,12 @@ function convertNatives(ids) {
       continue;
     }
 
-    var pick = chooseExport_(f.mimeType, fmts);
-    if (!pick) {
+    var candidates = exportCandidates_(f.mimeType, fmts);
+    if (!candidates.length) {
       failed.push({ id: id, name: f.name, why: 'Google offers no export format for this type' });
       continue;
     }
-    var newName = f.name + '.' + pick.ext;
+    var newName = f.name + '.' + candidates[0].ext;
 
     // Mirror the original's folders under the conversion root, in My Drive.
     var parent;
@@ -642,11 +699,15 @@ function convertNatives(ids) {
      * worse than no check, because it silently skips real work.
      */
     try {
-      var q = "name = '" + String(newName).replace(/\\/g, '\\\\').replace(/'/g, "\\'") +
-              "' and '" + parent + "' in parents and trashed = false";
-      var hit = Drive.Files.list({ q: q, fields: 'files(id)', pageSize: 1, supportsAllDrives: true });
+      // Every candidate name, not just the preferred one: an earlier run may
+      // have fallen back to a lighter format, and looking only for the best one
+      // would convert it a second time.
+      var esc = function (v) { return String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); };
+      var names = candidates.map(function (cc) { return "name = '" + esc(f.name + '.' + cc.ext) + "'"; });
+      var q = '(' + names.join(' or ') + ") and '" + parent + "' in parents and trashed = false";
+      var hit = Drive.Files.list({ q: q, fields: 'files(id,name)', pageSize: 1, supportsAllDrives: true });
       if (hit.files && hit.files.length) {
-        skipped.push({ id: id, name: newName, why: 'already converted' });
+        skipped.push({ id: id, name: hit.files[0].name, why: 'already converted' });
         continue;
       }
     } catch (e) { /* the check is an optimisation; a failure here is not fatal */ }
@@ -657,40 +718,58 @@ function convertNatives(ids) {
      * instead of the .xlsx that was asked for. The export endpoint is the only
      * way to name the format.
      */
-    var resp;
-    try {
-      resp = UrlFetchApp.fetch(
-        'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
-        '/export?mimeType=' + encodeURIComponent(pick.mime),
-        { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
-      );
-    } catch (e) {
-      failed.push({ id: id, name: f.name, why: 'export request failed: ' + e.message });
-      continue;
+    /*
+     * Try each format Google offers, best first, and step down on a size
+     * refusal. A Doc too large as .docx frequently fits as .pdf and nearly
+     * always as .txt — stopping at the first refusal discarded files that were
+     * exportable, just not in the nicest format.
+     */
+    var lastWhy = 'Drive refused the export';
+    var savedName = null, savedExt = null, savedId = null, tooBig = false;
+
+    for (var c = 0; c < candidates.length && !savedId; c++) {
+      var cand = candidates[c];
+      var candName = f.name + '.' + cand.ext;
+      var resp;
+      try {
+        resp = UrlFetchApp.fetch(
+          'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+          '/export?mimeType=' + encodeURIComponent(cand.mime),
+          { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+        );
+      } catch (e) { lastWhy = 'export request failed: ' + e.message; continue; }
+
+      var code = resp.getResponseCode();
+      if (code !== 200) {
+        var body = '';
+        try { body = resp.getContentText().slice(0, 300); } catch (e2) { body = ''; }
+        if (/exportSizeLimitExceeded/.test(body)) {
+          tooBig = true;
+          lastWhy = 'too large for Drive to export in any offered format ' +
+                    '(Google caps native export at about 10 MB) — download it by hand from Google';
+          continue;   // a lighter format may still fit
+        }
+        lastWhy = 'Drive refused the export (HTTP ' + code + ')';
+        continue;
+      }
+
+      try {
+        // setContentType, not the response's own type — see uploadMimeFor_.
+        var blob = resp.getBlob().setName(candName).setContentType(uploadMimeFor_(cand.ext));
+        var created = Drive.Files.create(
+          { name: candName, parents: [parent] }, blob, { supportsAllDrives: true }
+        );
+        savedId = created.id; savedName = candName; savedExt = cand.ext;
+      } catch (e) {
+        lastWhy = 'could not save the converted file: ' + e.message;
+      }
     }
 
-    var code = resp.getResponseCode();
-    if (code !== 200) {
-      var body = '';
-      try { body = resp.getContentText().slice(0, 300); } catch (e2) { body = ''; }
-      // 403 exportSizeLimitExceeded is the one everyone meets: Drive refuses to
-      // export anything over roughly 10 MB, and no transport change avoids it.
-      var why = /exportSizeLimitExceeded/.test(body)
-        ? 'too large for Drive to export (Google caps native export at about 10 MB) — ' +
-          'download it by hand from Google instead'
-        : 'Drive refused the export (HTTP ' + code + ')';
-      failed.push({ id: id, name: f.name, why: why });
-      continue;
-    }
-
-    try {
-      var blob = resp.getBlob().setName(newName);
-      var created = Drive.Files.create(
-        { name: newName, parents: [parent] }, blob, { supportsAllDrives: true }
-      );
-      done.push({ id: id, name: newName, newId: created.id, as: pick.ext });
-    } catch (e) {
-      failed.push({ id: id, name: f.name, why: 'could not save the converted file: ' + e.message });
+    if (savedId) {
+      done.push({ id: id, name: savedName, newId: savedId, as: savedExt,
+                  fellBack: savedExt !== candidates[0].ext ? candidates[0].ext : null });
+    } else {
+      failed.push({ id: id, name: f.name, why: lastWhy, tooBig: tooBig });
     }
   }
 
