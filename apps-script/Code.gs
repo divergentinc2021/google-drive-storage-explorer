@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v33';
+var APP_VERSION = 'v34';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -142,8 +142,10 @@ function publishInstaller(key, fileId) {
   var all = installers_();
   all[key] = { id: file.getId(), version: spec.version, name: file.getName() };
   PropertiesService.getScriptProperties().setProperty(PROP_INSTALLERS, JSON.stringify(all));
-  return { ok: true, key: key, file: file.getName(), id: file.getId(),
-           url: 'https://drive.google.com/file/d/' + file.getId() + '/view' };
+  var out = { ok: true, key: key, file: file.getName(), id: file.getId(),
+              url: 'https://drive.google.com/file/d/' + file.getId() + '/view' };
+  Logger.log(JSON.stringify(out, null, 2));   // see the note in publishFavicon
+  return out;
 }
 
 /*
@@ -417,7 +419,38 @@ function publishFavicon(access) {
     ? DriveApp.Access.ANYONE_WITH_LINK
     : DriveApp.Access.DOMAIN_WITH_LINK;
   file.setSharing(who, DriveApp.Permission.VIEW);
-  return { ok: true, fileId: file.getId(), access: String(who), url: faviconUrl_() };
+
+  /*
+   * Logger.log, not just a return value. The editor's execution log shows only
+   * what was LOGGED — a function that merely returns an object completes with
+   * "Execution started / Execution completed" and nothing between, which is
+   * indistinguishable from having done nothing at all.
+   */
+  var out = { ok: true, fileId: file.getId(), access: String(who), url: faviconUrl_() };
+  Logger.log(JSON.stringify(out, null, 2));
+  Logger.log('Now hard-reload the web app. If the tab still shows Google\'s icon, ' +
+             'run publishFavicon(\'anyone\') — the CDN may not serve a ' +
+             'domain-restricted image to an unauthenticated favicon request.');
+  return out;
+}
+
+/** Is an icon published, and what is it? Run this to check without republishing. */
+function faviconStatus() {
+  var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
+  var out = { published: !!id, fileId: id || null, url: faviconUrl_() };
+  if (id) {
+    try {
+      var f = DriveApp.getFileById(id);
+      out.name = f.getName();
+      out.sharing = String(f.getSharingAccess());
+      out.permission = String(f.getSharingPermission());
+      out.sizeBytes = f.getSize();
+    } catch (e) {
+      out.error = 'the recorded file could not be read: ' + e.message;
+    }
+  }
+  Logger.log(JSON.stringify(out, null, 2));
+  return out;
 }
 
 /** Google's image CDN for that Drive file. Empty until publishFavicon has run. */
