@@ -67,8 +67,11 @@ function dsInit() {
   document.getElementById('btnScan').addEventListener('click', dsScan);
   document.getElementById('scope').addEventListener('change', function () {
     if (this.value === '__pick__') {
-      // Not a scope — an entry point back to the multi-select.
-      this.value = DS_TARGETS.length > 1 ? '__multi__' : (DS_LAST_SCOPE || 'owned');
+      // Not a scope — an entry point back to the multi-select. Put the control
+      // back to whatever is actually selected; dsSyncScopeOptions is the one
+      // place that knows how each kind of selection is spelled.
+      if (DS_TARGETS.length) dsSyncScopeOptions();
+      else this.value = DS_LAST_SCOPE || 'owned';
       dsShowPicker();
       return;
     }
@@ -1264,22 +1267,43 @@ var DS_LAST_SCOPE = null;
 function dsSyncScopeOptions() {
   var sel = document.getElementById('scope');
   if (!sel) return;
-  var multi = sel.querySelector('option[value="__multi__"]');
+  // NOT '__pick__' — that value is the "⋯ Choose several…" entry that opens the
+  // picker. Reusing it would relabel and disable the way back in.
+  var synth = sel.querySelector('option[value="__sel__"]');
+
+  /*
+   * What the dropdown cannot say by itself: several targets at once, or a
+   * folder inside a drive. A folder used to fall back to its drive's option,
+   * so picking "Client Data" left the header reading "Shared drive: Archive
+   * 2019" while the map below was showing the folder — the control disagreeing
+   * with the result it produced.
+   */
+  var label = '';
   if (DS_TARGETS.length > 1) {
-    if (!multi) {
-      multi = document.createElement('option');
-      multi.value = '__multi__';
-      sel.insertBefore(multi, sel.firstChild);
+    label = DS_TARGETS.length + ' locations';
+  } else if (DS_TARGETS.length === 1 && String(DS_TARGETS[0].key).indexOf('folder:') === 0) {
+    label = 'Folder: ' + DS_TARGETS[0].name;
+  }
+
+  if (label) {
+    if (!synth) {
+      synth = document.createElement('option');
+      synth.value = '__sel__';
+      // Displayable but not choosable: selecting it would set the scope to a
+      // value no scan understands, and clear the very targets it describes.
+      synth.disabled = true;
+      sel.insertBefore(synth, sel.firstChild);
     }
-    multi.textContent = DS_TARGETS.length + ' locations';
-    sel.value = '__multi__';
-  } else {
-    if (multi) multi.remove();
-    if (DS_TARGETS.length === 1) {
-      var t = DS_TARGETS[0];
-      var want = t.driveId ? 'drive:' + t.driveId : t.scope;
-      if (sel.querySelector('option[value="' + want + '"]')) sel.value = want;
-    }
+    synth.textContent = label;
+    sel.value = '__sel__';
+    return;
+  }
+
+  if (synth) synth.remove();
+  if (DS_TARGETS.length === 1) {
+    var t = DS_TARGETS[0];
+    var want = t.driveId ? 'drive:' + t.driveId : t.scope;
+    if (sel.querySelector('option[value="' + want + '"]')) sel.value = want;
   }
 }
 
