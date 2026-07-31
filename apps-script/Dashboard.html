@@ -172,6 +172,7 @@ function dsOnBoot(b) {
   pick.textContent = '⋯ Choose several…';
   sel.appendChild(pick);
 
+  dsRenderApps();
   dsRenderQuota();   // account figures need no scan — show them immediately
   dsRenderTiles();
   dsRenderDrives();
@@ -203,6 +204,9 @@ function dsScan() {
   dsProgress(0, 'Starting…');
 
   if (!DS_TARGETS.length) DS_TARGETS = [dsScopeTarget()];
+  dsLogStart();
+  dsLog('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') +
+        '. Drive is listed a page at a time, so the first answer is the slowest.');
   dsScanTarget(0, 0);
 }
 
@@ -232,8 +236,14 @@ function dsScanTarget(ti, seen) {
 }
 
 function dsScanStep(opts, seen, ti) {
+  var page = (opts.pageToken ? 'next page' : 'first page');
+  dsLog('Asking Drive for the ' + page + ' of ' + DS_TARGETS[ti].name + '…');
+  var t0 = Date.now();
   google.script.run
     .withSuccessHandler(function (res) {
+      dsLog('Drive answered in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's — ' +
+            res.items.length.toLocaleString() + ' items' +
+            (res.done ? ' (last page)' : ''), 'ok');
       // Each chunk ships its own mime dictionary; remap into the global table.
       var remap = res.mimes.map(function (m) {
         var at = DS_MIMES.indexOf(m);
@@ -263,8 +273,49 @@ function dsScanStep(opts, seen, ti) {
       if (res.done) dsScanTarget(ti + 1, total);
       else { opts.pageToken = res.nextPageToken; dsScanStep(opts, total, ti); }
     })
-    .withFailureHandler(dsFail)
+    .withFailureHandler(function (err) {
+      dsLog('Drive refused: ' + (err && err.message || err), 'bad');
+      dsFail(err);
+    })
     .scanChunk(opts);
+}
+
+/*
+ * ── the running log ─────────────────────────────────────────────────────────
+ *
+ * A percentage and one replaced line say almost nothing during the long quiet
+ * stretch before Drive answers the first page — "0 items indexed" for thirty
+ * seconds is indistinguishable from a hang. A scrolling list of what has
+ * happened, with elapsed time, distinguishes slow from stuck without anyone
+ * having to guess.
+ *
+ * Capped at 400 lines: this can run for thousands of pages and an unbounded
+ * log would grow the DOM until the tab crawls.
+ */
+var DS_LOG_T0 = 0, DS_LOG_N = 0;
+
+function dsLogStart() {
+  DS_LOG_T0 = Date.now();
+  DS_LOG_N = 0;
+  var el = document.getElementById('runLog');
+  if (el) { el.innerHTML = ''; el.hidden = false; }
+}
+
+function dsLog(text, cls) {
+  var el = document.getElementById('runLog');
+  if (!el) return;
+  var t = ((Date.now() - DS_LOG_T0) / 1000).toFixed(1);
+  var row = document.createElement('div');
+  row.className = 'lg' + (cls ? ' ' + cls : '');
+  row.innerHTML = '<span class="lt">' + t + 's</span>' + dsEsc(text);
+  el.appendChild(row);
+  if (++DS_LOG_N > 400) { el.removeChild(el.firstChild); DS_LOG_N--; }
+  el.scrollTop = el.scrollHeight;
+}
+
+function dsLogDone() {
+  var el = document.getElementById('runLog');
+  if (el) el.hidden = false;   // kept visible: it is the record of what happened
 }
 
 function dsProgress(pct, txt) {
@@ -276,6 +327,8 @@ function dsScanDone() {
   DS_SCANNING = false;
   document.getElementById('btnScan').disabled = false;
   dsProgress(100, DS_ALL.length.toLocaleString() + ' items · building map…');
+  dsLog('All pages in. Building the tree and laying out ' +
+        DS_ALL.length.toLocaleString() + ' items…');
 
   dsBuildTree();
   DS_STACK = [DS_TREE];
@@ -1155,7 +1208,7 @@ function dsRenderSelBar(kind, key, count, bytes, folders, tileCount) {
  * thing anyone should be able to do is read the list and decline.
  */
 var DS_CONV_QUEUE = [], DS_CONV_DONE = 0, DS_CONV_FAILED = [], DS_CONV_SKIPPED = 0;
-var DS_CONV_FELLBACK = 0;
+var DS_CONV_FELLBACK = 0, DS_CONV_LOG = [];
 
 function dsNativeIds() {
   return DS_ALL.filter(function (n) {
@@ -1215,6 +1268,8 @@ function dsShowConvertPlan(p) {
     document.getElementById('convGo').addEventListener('click', function () {
       DS_CONV_QUEUE = conv.map(function (c) { return c.id; });
       DS_CONV_DONE = 0; DS_CONV_FAILED = []; DS_CONV_SKIPPED = 0; DS_CONV_FELLBACK = 0;
+      DS_CONV_LOG = [{ cls: 'dim', text: 'Starting — ' + conv.length.toLocaleString() +
+        ' file(s), in batches of about 90 seconds.' }];
       dsRunConvert();
     });
   }
@@ -1229,12 +1284,36 @@ function dsRunConvert() {
   var total = DS_CONV_DONE + DS_CONV_QUEUE.length + DS_CONV_FAILED.length + DS_CONV_SKIPPED;
   dsDialog('<h3>Converting…</h3>' +
     '<p class="hint">' + DS_CONV_DONE.toLocaleString() + ' of ' + total.toLocaleString() +
-    ' done. Leave this tab open.</p>' +
+    ' done. Each batch runs for about 90 seconds — leave this tab open.</p>' +
     '<div class="bar"><i style="width:' +
-    (total ? Math.round(100 * DS_CONV_DONE / total) : 0) + '%"></i></div>');
+    (total ? Math.round(100 * DS_CONV_DONE / total) : 0) + '%"></i></div>' +
+    '<div class="runlog inline" id="convLog"></div>');
+  dsPaintConvLog();
 
+  var t0 = Date.now();
   google.script.run
     .withSuccessHandler(function (r) {
+      var secs = ((Date.now() - t0) / 1000).toFixed(0);
+      /*
+       * Per FILE, not per batch. A batch line only says a number moved; naming
+       * what converted, what fell back to a lighter format and what refused is
+       * what makes a run diagnosable while it is still running — every fault in
+       * this feature so far was identified from exactly these lines.
+       */
+      (r.done || []).forEach(function (d) {
+        DS_CONV_LOG.push({ cls: 'ok', text: (d.fellBack
+          ? d.name + ' — fell back to .' + d.as + ' (.' + d.fellBack + ' was over the export limit)'
+          : d.name) });
+      });
+      (r.skipped || []).forEach(function (s) {
+        DS_CONV_LOG.push({ cls: 'dim', text: s.name + ' — already converted' });
+      });
+      (r.failed || []).forEach(function (f) {
+        DS_CONV_LOG.push({ cls: 'bad', text: f.name + ' — ' + f.why });
+      });
+      DS_CONV_LOG.push({ cls: 'dim', text: '— batch finished in ' + secs + 's, ' +
+        (r.remaining || []).length.toLocaleString() + ' still queued —' });
+
       DS_CONV_DONE += (r.done || []).length;
       DS_CONV_FELLBACK += (r.done || []).filter(function (d) { return d.fellBack; }).length;
       DS_CONV_SKIPPED += (r.skipped || []).length;
@@ -1243,8 +1322,21 @@ function dsRunConvert() {
       if (DS_CONV_QUEUE.length) dsRunConvert();
       else dsConvertDone();
     })
-    .withFailureHandler(dsFail)
+    .withFailureHandler(function (err) {
+      DS_CONV_LOG.push({ cls: 'bad', text: 'The batch failed: ' + (err && err.message || err) });
+      dsConvertDone();
+    })
     .convertNatives(DS_CONV_QUEUE);
+}
+
+/* The dialog is rebuilt every batch, so the log has to be re-painted into it. */
+function dsPaintConvLog() {
+  var el = document.getElementById('convLog');
+  if (!el) return;
+  el.innerHTML = DS_CONV_LOG.slice(-300).map(function (l) {
+    return '<div class="lg ' + l.cls + '">' + dsEsc(l.text) + '</div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
 }
 
 function dsConvertDone() {
@@ -1431,6 +1523,55 @@ function dsUpdateTrashBtn() {
   btn.textContent = ids.length
     ? 'Move ' + ids.length + ' file' + (ids.length > 1 ? 's' : '') + ' (' + tmFmtBytes(bytes) + ') to Drive trash'
     : 'Move selected to Drive trash';
+}
+
+/*
+ * ── the companion desktop tools ─────────────────────────────────────────────
+ *
+ * Each keeps its own product mark rather than a generic download glyph. All
+ * three live in the same taskbar, so a shared icon is a coin flip every time
+ * someone clicks one — the same reasoning that gave Storage Mapper a different
+ * motif from this app in the first place.
+ *
+ *   Explorer  four treemap blocks     (this app)
+ *   Mapper    two blocks bridged      "map this side onto that side"
+ *   Disk      treemap inside a screen  same map, local disks
+ */
+var DS_APP_MARKS = {
+  mapper:
+    '<svg viewBox="0 0 24 24" class="am" aria-hidden="true">' +
+    '<rect x="1.5" y="4" width="7.5" height="16" rx="1.6"/>' +
+    '<rect x="10.6" y="10.6" width="2.8" height="2.8" rx="0.7" opacity=".9"/>' +
+    '<rect x="15" y="4" width="7.5" height="16" rx="1.6" opacity=".62"/></svg>',
+  desktop:
+    '<svg viewBox="0 0 24 24" class="am" aria-hidden="true">' +
+    '<rect x="1.6" y="3.4" width="20.8" height="14.4" rx="2" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.7"/>' +
+    '<path d="M9 21h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
+    '<rect x="4.4" y="6.2" width="7" height="4.6" rx="0.8"/>' +
+    '<rect x="12.4" y="6.2" width="7.2" height="4.6" rx="0.8" opacity=".78"/>' +
+    '<rect x="4.4" y="11.6" width="7" height="3.6" rx="0.8" opacity=".6"/>' +
+    '<rect x="12.4" y="11.6" width="7.2" height="3.6" rx="0.8" opacity=".44"/></svg>'
+};
+
+function dsRenderApps() {
+  var el = document.getElementById('apps');
+  if (!el || !DS_BOOT || !DS_BOOT.siblingApps) return;
+  el.innerHTML = DS_BOOT.siblingApps.map(function (a) {
+    return '<span class="appchip" tabindex="0">' +
+      (DS_APP_MARKS[a.key] || '') +
+      '<span class="an">' + dsEsc(a.name) + '</span>' +
+      '<span class="av">' + dsEsc(a.version) + '</span>' +
+      '<span class="appcard">' +
+        '<b>' + dsEsc(a.full) + ' <span class="av">' + dsEsc(a.version) + '</span></b>' +
+        '<span class="ad">' + dsEsc(a.desc) + '</span>' +
+        '<span class="al">' +
+          '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download latest</a>' +
+          '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
+        '</span>' +
+        '<span class="an-note">Needs access to the private <code>divergentinc2021</code> repo.</span>' +
+      '</span></span>';
+  }).join('');
 }
 
 function dsRenderGateNote() {
