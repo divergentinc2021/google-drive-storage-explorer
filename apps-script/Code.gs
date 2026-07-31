@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v31';
+var APP_VERSION = 'v32';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -116,7 +116,7 @@ function installers_() {
  * release needs the new .exe uploaded and this re-run.
  */
 function publishInstaller(key, fileId) {
-  if (!isOwner_()) throw new Error('Only ' + OWNERS.join(', ') + ' may publish installers.');
+  if (!isEditorOwner_()) throw ownerRefusal_('publish installers');
   var spec = null;
   SIBLING_APPS_RAW.forEach(function (a) { if (a.key === key) spec = a; });
   if (!spec) throw new Error('Unknown app: ' + key + '. Try ' +
@@ -249,6 +249,59 @@ function isOwner_() {
   return OWNERS.indexOf(currentUser_()) !== -1;
 }
 
+/**
+ * Run this from the editor when a maintenance function says you are not the
+ * owner. It reports what the script actually sees, which the refusal alone
+ * never did.
+ */
+function whoAmI() {
+  var active, effective;
+  try { active = Session.getActiveUser().getEmail() || '(empty)'; }
+  catch (e) { active = '(blocked: ' + e.message + ')'; }
+  try { effective = Session.getEffectiveUser().getEmail() || '(empty)'; }
+  catch (e) { effective = '(blocked)'; }
+  var out = { activeUser: active, effectiveUser: effective, owners: OWNERS,
+              accepted: isEditorOwner_() };
+  Logger.log(JSON.stringify(out, null, 2));
+  return out;
+}
+
+/*
+ * Owner check for functions run FROM THE EDITOR, which is a different situation
+ * to a web request.
+ *
+ * Session.getActiveUser().getEmail() returns an empty string in several
+ * ordinary cases — a consumer account, certain authorisation modes, or a
+ * account outside the script owner's domain — and publishFavicon refused with
+ * "Only studiouih@uwc.ac.za may publish the icon" while being run by exactly
+ * that person. getEffectiveUser() is who the script RUNS AS, which for an
+ * editor Run is whoever clicked it, so either identity matching is enough.
+ *
+ * Deliberately NOT used for isOwner_ itself: that gates doPost and the config
+ * writes, where the caller is a request rather than a person at the editor, and
+ * effective-user would there mean "the deployment", not "an owner".
+ */
+function isEditorOwner_() {
+  var a = currentUser_();
+  var e = '';
+  try { e = (Session.getEffectiveUser().getEmail() || '').toLowerCase(); } catch (x) { e = ''; }
+  // !! because this is reported by whoAmI: with both identities empty the bare
+  // expression yields '' , which reads as a blank rather than as a refusal in
+  // the one log someone consults when they have just been refused.
+  return !!((a && OWNERS.indexOf(a) !== -1) || (e && OWNERS.indexOf(e) !== -1));
+}
+
+/** The refusal, naming what it saw so the cause is visible. */
+function ownerRefusal_(what) {
+  var w = whoAmI();
+  return new Error(
+    'Only ' + OWNERS.join(', ') + ' may ' + what + '.\n' +
+    'This ran as: active=' + w.activeUser + ', effective=' + w.effectiveUser + '.\n' +
+    'If neither is an owner, sign in to the editor as one — or add the address ' +
+    'above to OWNERS in Code.gs.'
+  );
+}
+
 // ─── tunables ────────────────────────────────────────────────────────────────
 var SCAN_BUDGET_MS = 240000; // stop a chunk at 4 min, hand a token back to client
 var PAGE_SIZE = 1000;
@@ -315,7 +368,7 @@ var FAVICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC
  * favicon request.
  */
 function publishFavicon(access) {
-  if (!isOwner_()) throw new Error('Only ' + OWNERS.join(', ') + ' may publish the icon.');
+  if (!isEditorOwner_()) throw ownerRefusal_('publish the icon');
   var props = PropertiesService.getScriptProperties();
   var blob = Utilities.newBlob(Utilities.base64Decode(FAVICON_B64), 'image/png', FAVICON_NAME);
 
