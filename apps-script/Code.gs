@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v21';
+var APP_VERSION = 'v22';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -126,7 +126,66 @@ var EXPORT_MAP = {
  * whole app down. If the tab shows Google's default instead of the red mark,
  * host assets/icon-192.png somewhere public and put that URL here.
  */
-var FAVICON_URL = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJHb29nbGUgRHJpdmUgU3RvcmFnZSBFeHBsb3JlciI+CiAgPCEtLQogICAgQXBwIGljb24uIFRoZSByb3VuZGVkIHJlZCBzcXVhcmUgaXMgdGhlIGRhc2hib2FyZCdzIG93biAubG9nbyBtYXJrOyB0aGUgZm91cgogICAgYmxvY2tzIGluc2lkZSBhcmUgYSB0cmVlbWFwIHBhcnRpdGlvbiwgYW5kIHRoZWlyIG9wYWNpdHkgZm9sbG93cyB0aGUgc2l6ZQogICAgcmFtcCAobGFyZ2VzdCA9IG1vc3Qgb3BhcXVlKSBzbyB0aGUgaWNvbiBzYXlzIHdoYXQgdGhlIGFwcCBkb2VzLgogICAgRGVsaWJlcmF0ZWx5IG9ubHkgZm91ciBibG9ja3Mg4oCUIGFueXRoaW5nIGZpbmVyIHR1cm5zIHRvIG11c2ggYXQgMTZweC4KICAgIEdyYWRpZW50IHN0b3BzIGFyZSB0aGUgdmFsaWRhdGVkIHJhbXA6IHNpemUtNyAtPiBzaXplLTUgLT4gc2l6ZS0xLgogIC0tPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2E0MGExYiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiNkMzRiNDkiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjZWVkNGQxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KCiAgPHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHJ4PSIxMTQiIHJ5PSIxMTQiIGZpbGw9InVybCgjZykiLz4KCiAgPCEtLQogICAgT3BhY2l0eSBmbG9vciBpcyAwLjUyLCBub3QgdGhlIHJhbXAncyB0cnVlIGJvdHRvbTogYXQgMTZweCBhbnl0aGluZyBmYWludGVyCiAgICBkaXNhcHBlYXJzIGludG8gdGhlIGxpZ2h0IGVuZCBvZiB0aGUgZ3JhZGllbnQgYW5kIHRoZSBpY29uIHJlYWRzIGFzIGEgcGxhaW4KICAgIHJlZCBzcXVhcmUuIFRoZSBmb3VyIHN0ZXBzIHN0aWxsIGRlc2NlbmQsIHNvIHRoZSBvcmRlcmluZyBzdXJ2aXZlcy4KICAgIEdhcHMgYXJlIDE4cHggKDMuNSUpIGZvciB0aGUgc2FtZSByZWFzb24g4oCUIDhweCB2YW5pc2hlZCB3aGVuIHNjYWxlZCBkb3duLgogIC0tPgogIDxnIGZpbGw9IiNmZmZmZmYiPgogICAgPHJlY3QgeD0iOTYiICB5PSI5NiIgIHdpZHRoPSIxOTAiIGhlaWdodD0iMTgwIiByeD0iMTAiIG9wYWNpdHk9IjEiLz4KICAgIDxyZWN0IHg9IjMwNCIgeT0iOTYiICB3aWR0aD0iMTEyIiBoZWlnaHQ9IjE4MCIgcng9IjEwIiBvcGFjaXR5PSIwLjg0Ii8+CiAgICA8cmVjdCB4PSI5NiIgIHk9IjI5NCIgd2lkdGg9IjE5MCIgaGVpZ2h0PSIxMjIiIHJ4PSIxMCIgb3BhY2l0eT0iMC42OCIvPgogICAgPHJlY3QgeD0iMzA0IiB5PSIyOTQiIHdpZHRoPSIxMTIiIGhlaWdodD0iMTIyIiByeD0iMTAiIG9wYWNpdHk9IjAuNTIiLz4KICA8L2c+Cjwvc3ZnPgo=';
+/*
+ * The tab icon, and why this is not simply a <link rel="icon">.
+ *
+ * An Apps Script web app is served inside a sandboxed iframe, so the tab icon
+ * comes from the OUTER script.google.com page, not from Index.html. A link tag
+ * in the served markup is ignored, and setFaviconUrl() is the only lever.
+ *
+ * setFaviconUrl wants an http(s) URL. The previous version passed a data: URI,
+ * which is undocumented and, in practice, ignored — the tab kept Google's
+ * generic Apps Script icon, which is what was reported. The repo is private, so
+ * a raw.githubusercontent URL would 404 for the browser fetching the icon.
+ *
+ * So the script publishes the icon into Drive and serves it from Google's own
+ * image CDN. publishFavicon() is a deliberate, owner-only action because it
+ * makes one file link-readable. Nothing here shares anything on its own, and
+ * the app works without it — the tab simply keeps Google's icon.
+ */
+var PROP_FAVICON = 'SS_FAVICON_FILE_ID';
+var FAVICON_NAME = 'storage-explorer-favicon.png';
+var FAVICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAARGVYSWZNTQAqAAAACAABh2kABAAAAAEAAAAaAAAAAAADoAEAAwAAAAEAAQAAoAIABAAAAAEAAAAgoAMABAAAAAEAAAAgAAAAAKyGYvMAAAGdaVRYdFhNTDpjb20uYWRvYmUueG1wAAAAAAA8eDp4bXBtZXRhIHhtbG5zOng9ImFkb2JlOm5zOm1ldGEvIiB4OnhtcHRrPSJYTVAgQ29yZSA2LjAuMCI+CiAgIDxyZGY6UkRGIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CiAgICAgIDxyZGY6RGVzY3JpcHRpb24gcmRmOmFib3V0PSIiCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjUxMjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj41MTI8L2V4aWY6UGl4ZWxZRGltZW5zaW9uPgogICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KICAgPC9yZGY6UkRGPgo8L3g6eG1wbWV0YT4KuC9IVwAABe5JREFUWAmVV99vFFUYPTM72+0vLSWmbG2EYCElmJTEJ0MQwcRXI88kBjDyJn+EbxIfSHzWJyChMcYHTDQVkuKLETGYNEXsAxJaLRWwLbS0290dz/nuvbOz21900tk7c39853zn+757p1HKC7mruvQcj3++ib9/+BH3L44AHI7jCFEc847WfXbjnBPFTeOaX0gKKJ/4ADuPHsFLw8OI29tzaECUJ/Dgm6uYOH8BC3cnNYCks92A443ACZgnlRHh/Ow5ioDqKuIkQde+Qbx6+hR2Hj+ekcgITHz+BcY/PY+oECEplXIeN4PkASMaD+pkgDnwQNzNi4Fa1ewOnP0Y5ZMnjQR7gQfffmfghVIRCSVqyL0xeLwFeLARwI14qQ1xW4KZr77E/I0bjkB1cQkTn12g55SNMgWvgkehzTwnsOboXSCN8ZZnPy9TwfKHcwoFWzd7+SLqy8tInty6jYU//qTsbU2GU8lVryElCDxYai1jmrIvdW3KNuK7HJDEGlP+aA1TjLdyXM4VPWmGLWnDytQUnk8Sd/rq95yW5rxxhl7/6EP0vXOENuSx1Gq0spvvezo+gX+uXMFrZ04h6ekhZl2znUPFBM9+v425a9c8CRKk0qL19OYvSO5fGkHS0eHZuZijDpTfexevvH1YyFtepfIuPB4dZakdZZmVSIAOaZVYFosMU4z569fNSYFH6uM9xzwgFbK1WDpwxVSy11dXtwQOE9LKqmHVVyvmiNxThHTFemFoYoYogIuA3cyHJJ9IIaEs5t6AM7P1ryWlTePCSAKHS+8Mh/c8AxcJ9iUhSx24U0GkuCpY2Lrl1Jibkq3RMo+varGL9pqAgwIikJWXJlF+1bdl+/bwnfS5NRm4+jYjkPfcniWXBTBnzfmx8a/WWNl53YLnZkJj6ynAZGRpWg5kKvi93ep8G/hiZpuTe7AqsAiKiO4mAqoCVwmeQGM/lxGpoBTeDr7mmgJhkXXYj+E3K+DBG0lIMHnuwc2QdjqyfuGLcy2ZlYjyWPTtzz9r+7XEa3gu76WEC0EG7hIR2oIrKy+Mn7L+bQ3XWQVpIxIR3XKkxv6Q+eZ50TYoKBSjb7zJpHeJ4hLSyV/a1Yf2/rKFxOLL0Kzbcm1tfh7VJ49R2rMHcVcXzwV6LA+t9hPUFhdRW1nmScjzhv3aHY2Q7QOt4EoY7o5dg3vRfWCI7LlTyhNzSEQdQdfymV88lZkZLI4/R2n3bsQdnXYwRYUE8NJX5/5DnXOc7C0ELEFk1G53pKIe4eVDw7wPIeXXjNDFIWsdH/dOGVemp7F8/y90Dh1ARC8lu4VCuUFvK7NdqDx6ZF5n3kt+lWEmuyZ7IuYu45byPLBjmVCplGpqha9kZa9iTjn1eWlHMVv16bJPTtklkSZwnwu2E4ptADdFZDvILisevNGqz4Nby2cZ1DeBZFefDh8pEfo0bndLGbaCKyHNK4HyDp4L3C41HtwApICAqACPPAPNh8D6mA9rwE0BlSHX5+Nvma6NyAMabHhuATciJGNEZJBEmsClhqnANlMgKMFWVVDggL4JLAQE0oai00zfh0ogKaDLmuC5b0XAlVrOqBHhGq+GGw8K5OapTNuYhOUT72Nm5GsyLNmRampQgaXJu4wfDakMyclJKQ/pDT0zT63MEqz++4jJWkPl4UPEnR1+jKAapyPVpwvNCmgvYG507h1ENP/rrfTOJ+dskwiJ6FSgKnRbSbSul62S6n8JI5TzMj9HH73hXd5z/+h96zCS7oMH7T+W5Xv32MnvdsXMypEh0DM9yBYGA9bm+mWQfY0y03tuPKwzYAee7OhFsWcHMTraMXDmtAOl4gKXEpuDO8AAKuAXAs8R79633xRTdNF77BgGzp7l/wH8HNbBsannOe+CR8HDjVqvkGQHFe3eP4RS3y5Ba+PyWxZf5sbGMHv5EirTUzax0Ml9fY3RFmmb5G8Z01qOK+F0EEl2eR7A1xBQR31lBUt3JvDs1m+Y+2nMdjaVYyDipF4fyM1pGSOwsr29vx9FErAKEpC//gekok/yziYaFwAAAABJRU5ErkJggg==';
+
+/**
+ * Publish (or re-publish) the tab icon. Run once from the Apps Script editor,
+ * signed in as an owner. Returns the URL it will be served from.
+ *
+ * Defaults to DOMAIN sharing: everyone who can open this app is already a
+ * uwc.ac.za user, so the icon need not be readable by the whole internet. Pass
+ * 'anyone' only if the tab still shows Google's icon afterwards, which would
+ * mean the CDN is not serving a domain-restricted image to an unauthenticated
+ * favicon request.
+ */
+function publishFavicon(access) {
+  if (!isOwner_()) throw new Error('Only ' + OWNERS.join(', ') + ' may publish the icon.');
+  var props = PropertiesService.getScriptProperties();
+  var blob = Utilities.newBlob(Utilities.base64Decode(FAVICON_B64), 'image/png', FAVICON_NAME);
+
+  var id = props.getProperty(PROP_FAVICON), file = null;
+  if (id) { try { file = DriveApp.getFileById(id); } catch (e) { file = null; id = null; } }
+
+  if (file) {
+    // Replacing the BYTES needs the advanced service; DriveApp.setContent is
+    // text-only and would write the base64 as a string into a .png.
+    Drive.Files.update({}, file.getId(), blob);
+  } else {
+    file = DriveApp.createFile(blob);
+    props.setProperty(PROP_FAVICON, file.getId());
+  }
+
+  var who = (access === 'anyone')
+    ? DriveApp.Access.ANYONE_WITH_LINK
+    : DriveApp.Access.DOMAIN_WITH_LINK;
+  file.setSharing(who, DriveApp.Permission.VIEW);
+  return { ok: true, fileId: file.getId(), access: String(who), url: faviconUrl_() };
+}
+
+/** Google's image CDN for that Drive file. Empty until publishFavicon has run. */
+function faviconUrl_() {
+  var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
+  return id ? 'https://lh3.googleusercontent.com/d/' + id + '=w64-h64' : '';
+}
 
 function doGet() {
   var out = HtmlService.createTemplateFromFile('Index')
@@ -135,7 +194,8 @@ function doGet() {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   try {
-    if (FAVICON_URL) out.setFaviconUrl(FAVICON_URL);
+    var ico = faviconUrl_();
+    if (ico) out.setFaviconUrl(ico);
   } catch (e) {
     // rejected URL — serve the app without a custom icon rather than failing
   }
