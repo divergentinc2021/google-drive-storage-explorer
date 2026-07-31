@@ -395,6 +395,15 @@ select {
 .tabpane .panelhead { margin-bottom: 6px; }
 .tabpane .hint { margin: 0 0 8px; }
 
+/* ── scan dialog ────────────────────────────────────────────────────────── */
+.scandlg { width: 620px; }
+.scandlg h3 { margin: 0 0 10px; font-size: 14px; }
+/* Inside the dialog the bar is always shown, so it needs no hidden state and
+   no top-of-page spacing. */
+.scandlg .progress { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; padding: 0; }
+.scandlg .progress .bar { flex: 1; }
+.scandlg .runlog { margin: 0; max-height: 260px; }
+
 /* ── running log ────────────────────────────────────────────────────────── */
 .runlog {
   margin: 0 0 12px; max-height: 168px; overflow-y: auto;

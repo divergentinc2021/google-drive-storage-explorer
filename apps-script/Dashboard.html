@@ -117,6 +117,7 @@ function dsInit() {
     if (ev.key === 'Escape' && DS_SEL) dsClearSel();
   });
   document.getElementById('btnConvert').addEventListener('click', dsOpenConvert);
+  document.getElementById('scanClose').addEventListener('click', dsScanDlgClose);
   TM_AFTER_RENDER = dsResolveSel;
 
   // Right-click a tile. Bound once, here, so no build ends up with two menus.
@@ -188,9 +189,22 @@ function dsOnBoot(b) {
 
 function dsFail(err) {
   DS_SCANNING = false;
-  document.getElementById('progress').hidden = true;
   document.getElementById('btnScan').disabled = false;
-  dsDialog('<h3>Something went wrong</h3><pre>' + dsEsc(String(err && err.message || err)) + '</pre>');
+  var msg = String(err && err.message || err);
+
+  /*
+   * If the scan dialog is up, keep the failure INSIDE it. The log is the record
+   * of how far it got and what Drive last said, and opening a second modal over
+   * it would hide exactly that. Only fall back to the generic dialog when the
+   * failure came from somewhere else.
+   */
+  var d = document.getElementById('scanDlg');
+  if (d && d.open) {
+    dsLog(msg, 'bad');
+    dsScanDlgHold('Scan failed');
+    return;
+  }
+  dsDialog('<h3>Something went wrong</h3><pre>' + dsEsc(msg) + '</pre>');
 }
 
 // ── scan ────────────────────────────────────────────────────────────────────
@@ -199,11 +213,11 @@ function dsScan() {
   DS_SCANNING = true;
   DS_ALL = []; DS_BYID = {}; DS_MIMES = []; DS_STACK = [];
   document.getElementById('btnScan').disabled = true;
-  document.getElementById('progress').hidden = false;
   document.getElementById('mapEmpty').hidden = true;
   dsProgress(0, 'Starting…');
 
   if (!DS_TARGETS.length) DS_TARGETS = [dsScopeTarget()];
+  dsScanDlgOpen('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') + '…');
   dsLogStart();
   dsLog('Scanning ' + DS_TARGETS.map(function (t) { return t.name; }).join(', ') +
         '. Drive is listed a page at a time, so the first answer is the slowest.');
@@ -311,11 +325,40 @@ function dsScanStep(opts, seen, ti) {
  */
 var DS_LOG_T0 = 0, DS_LOG_N = 0;
 
+/*
+ * The scan dialog. Open while it runs, gone when it succeeds.
+ *
+ * On FAILURE it stays open with a Close button: the log is then the only record
+ * of what happened, and closing it automatically would throw away the one thing
+ * worth reading.
+ */
+function dsScanDlgOpen(title) {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  document.getElementById('scanTitle').textContent = title || 'Scanning…';
+  document.getElementById('scanFoot').hidden = true;
+  if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+}
+
+function dsScanDlgClose() {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  if (d.close) d.close(); else d.removeAttribute('open');
+}
+
+/** Leave it up, with a way out — used when something went wrong. */
+function dsScanDlgHold(title) {
+  var d = document.getElementById('scanDlg');
+  if (!d) return;
+  document.getElementById('scanTitle').textContent = title;
+  document.getElementById('scanFoot').hidden = false;
+}
+
 function dsLogStart() {
   DS_LOG_T0 = Date.now();
   DS_LOG_N = 0;
   var el = document.getElementById('runLog');
-  if (el) { el.innerHTML = ''; el.hidden = false; }
+  if (el) el.innerHTML = '';
 }
 
 function dsLog(text, cls) {
@@ -330,10 +373,6 @@ function dsLog(text, cls) {
   el.scrollTop = el.scrollHeight;
 }
 
-function dsLogDone() {
-  var el = document.getElementById('runLog');
-  if (el) el.hidden = false;   // kept visible: it is the record of what happened
-}
 
 function dsProgress(pct, txt) {
   document.getElementById('progBar').style.width = pct + '%';
@@ -357,7 +396,8 @@ function dsScanDone() {
   dsRenderTiles();
   dsRenderLists();
   document.getElementById('legend').innerHTML = tmLegendHtml();
-  setTimeout(function () { document.getElementById('progress').hidden = true; }, 900);
+  // A short beat so the last line is readable, then out of the way entirely.
+  setTimeout(dsScanDlgClose, 700);
 }
 
 // ── tree ────────────────────────────────────────────────────────────────────
