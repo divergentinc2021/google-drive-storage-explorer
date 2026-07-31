@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v20';
+var APP_VERSION = 'v19';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -577,20 +577,6 @@ function chooseExport_(mime, exportFormats) {
  * Eight Sites and Apps Script projects failed exactly there. Deriving the
  * upload type from the EXTENSION keeps it to types Drive will accept.
  */
-/**
- * Who to go and ask. A refusal on a file you do not own has a person attached
- * to it, and naming them turns a dead end into a next step.
- */
-function whoOwns_(f) {
-  if (!f || f.ownedByMe) return '';
-  var who = (f.owners && f.owners[0] && f.owners[0].emailAddress) || '';
-  var extra = who ? ' It belongs to ' + who + '.' : ' You do not own it.';
-  if (f.capabilities && f.capabilities.canDownload === false) {
-    extra += ' The owner has turned off downloading, which blocks export too.';
-  }
-  return extra;
-}
-
 /** Turn Drive's JSON error body into something a person can act on. */
 function explainDriveError_(code, body) {
   var reason = '', message = '';
@@ -616,15 +602,7 @@ function explainDriveError_(code, body) {
   };
   if (SAY[reason]) return SAY[reason];
   if (message) return message + ' (HTTP ' + code + (reason ? ', ' + reason : '') + ')';
-  /*
-   * No reason and no message means the body was not the JSON shape expected —
-   * an HTML error page, or empty. Carry a slice of it rather than flattening to
-   * a bare status: "HTTP 403" told us nothing about the one file that survived
-   * a whole-drive run, and there was no way to find out more from the screen.
-   */
-  var raw = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (raw) return 'HTTP ' + code + ' — Google said: ' + raw.slice(0, 140);
-  return 'HTTP ' + code + ' with no explanation from Google';
+  return 'HTTP ' + code + (reason ? ' — ' + reason : '');
 }
 
 function uploadMimeFor_(ext) {
@@ -757,16 +735,7 @@ function convertNatives(ids) {
     var id = ids[i];
     var f;
     try {
-      /*
-       * ownedByMe and capabilities come along because "Drive refused" is not an
-       * answer anyone can act on. A refusal on someone else's file means ask
-       * them; on your own it means something else entirely, and the difference
-       * is only visible here.
-       */
-      f = Drive.Files.get(id, {
-        fields: 'id,name,mimeType,parents,ownedByMe,owners(emailAddress),capabilities(canDownload,canCopy)',
-        supportsAllDrives: true
-      });
+      f = Drive.Files.get(id, { fields: 'id,name,mimeType,parents', supportsAllDrives: true });
     } catch (e) {
       failed.push({ id: id, name: id, why: 'could not read the file: ' + e.message });
       continue;
@@ -854,7 +823,7 @@ function convertNatives(ids) {
          * and "you are going too fast" — three different problems with three
          * different answers, and the reason code distinguishes them.
          */
-        lastWhy = 'Drive refused the export — ' + explainDriveError_(code, body) + whoOwns_(f);
+        lastWhy = 'Drive refused the export — ' + explainDriveError_(code, body);
         continue;
       }
 
