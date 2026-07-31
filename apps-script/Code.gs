@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v27';
+var APP_VERSION = 'v28';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.

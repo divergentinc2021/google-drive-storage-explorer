@@ -198,6 +198,7 @@ function dsFail(err) {
    * it would hide exactly that. Only fall back to the generic dialog when the
    * failure came from somewhere else.
    */
+  dsCreepStop();   // nothing is in flight any more
   var d = document.getElementById('scanDlg');
   if (d && d.open) {
     dsLog(msg, 'bad');
@@ -270,6 +271,13 @@ function dsScanStep(opts, seen, ti) {
   var page = (opts.pageToken ? 'next page' : 'first page');
   dsLog('Asking Drive for the ' + page + ' of ' + DS_TARGETS[ti].name + '…');
   var t0 = Date.now();
+  /*
+   * Creep from wherever the bar is toward the next real milestone. The ceiling
+   * is deliberately short of it: arriving before the answer does would be a
+   * lie, and the snap when the answer lands is the honest signal.
+   */
+  var barNow = parseFloat(document.getElementById('progBar').style.width) || 5;
+  dsCreepStart(barNow, Math.min(94, barNow + 22));
   google.script.run
     .withSuccessHandler(function (res) {
       dsLog('Drive answered in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's — ' +
@@ -374,7 +382,46 @@ function dsLog(text, cls) {
 }
 
 
+/*
+ * ── the bar has to move while nothing is happening ──────────────────────────
+ *
+ * Drive's first page took 58 seconds on a real account, and for all of it the
+ * bar sat at 5% with one unchanging line under it. There is genuinely no
+ * progress to report during that wait — the request is out and Google has not
+ * answered — but a frozen bar is indistinguishable from a frozen app.
+ *
+ * So it creeps: each tick closes a fixed fraction of the gap to a CEILING it
+ * never reaches. Always moving, always slowing, and it cannot overstate how far
+ * along things are, because it can never arrive. A real answer stops it and
+ * snaps the bar to the true figure.
+ */
+var DS_CREEP = null, DS_CREEP_V = 0, DS_CREEP_T0 = 0, DS_CREEP_SAID = 0;
+
+function dsCreepStop() {
+  if (DS_CREEP) { clearInterval(DS_CREEP); DS_CREEP = null; }
+}
+
+function dsCreepStart(from, ceiling) {
+  dsCreepStop();
+  DS_CREEP_V = from;
+  DS_CREEP_T0 = Date.now();
+  DS_CREEP_SAID = 0;
+  DS_CREEP = setInterval(function () {
+    DS_CREEP_V += (ceiling - DS_CREEP_V) * 0.05;
+    var el = document.getElementById('progBar');
+    if (el) el.style.width = DS_CREEP_V.toFixed(1) + '%';
+
+    // A line every 15s, so the log shows life too rather than one frozen entry.
+    var secs = Math.floor((Date.now() - DS_CREEP_T0) / 1000);
+    if (secs >= 15 && secs - DS_CREEP_SAID >= 15) {
+      DS_CREEP_SAID = secs;
+      dsLog('still waiting on Drive — ' + secs + 's so far', 'dim');
+    }
+  }, 300);
+}
+
 function dsProgress(pct, txt) {
+  dsCreepStop();   // a real figure supersedes the estimate
   document.getElementById('progBar').style.width = pct + '%';
   document.getElementById('progText').textContent = txt;
 }

@@ -1,9 +1,15 @@
 {
   "scriptId": "1I25zm4BPw8Vb_q_4mLTM6vZDrRBwMXFzr4AtUBqoQ0LCwuP5-fTCK4eR",
   "rootDir": "",
+  "_comment": [
+    ".gs FIRST. clasp writes pulled server files using the first extension in",
+    "this list, so with .js first a `clasp pull` produced Code.js ALONGSIDE the",
+    "existing Code.gs — byte-identical, and the next push sent both, defining",
+    "every function in this project twice."
+  ],
   "scriptExtensions": [
-    ".js",
-    ".gs"
+    ".gs",
+    ".js"
   ],
   "htmlExtensions": [
     ".html"
