@@ -688,10 +688,13 @@ function dsRenderClasses() {
     .sort(function (a, b) { return b.n - a.n; });
 
   // Only offer conversion when Google says something here is actually convertible.
+  var can = types.filter(function (t) { return t.as; })
+                 .reduce(function (a, t) { return a + t.n; }, 0);
+  var cannot = types.filter(function (t) { return !t.as; })
+                    .reduce(function (a, t) { return a + t.n; }, 0);
+
   var conv = document.getElementById('btnConvert');
   if (conv) {
-    var can = types.filter(function (t) { return t.as; })
-                   .reduce(function (a, t) { return a + t.n; }, 0);
     conv.disabled = !can;
     conv.textContent = can ? '⤓ Convert ' + can.toLocaleString() + '…' : '⤓ Convert…';
     conv.title = can
@@ -699,6 +702,15 @@ function dsRenderClasses() {
       : types.length ? 'Google offers no export format for these types'
                      : 'No Google-native files in this scan';
   }
+
+  // A count on the rail, so the tab advertises that it has something to say.
+  var badge = document.getElementById('classCount');
+  if (badge) {
+    badge.hidden = !(can + cannot);
+    badge.textContent = (can + cannot).toLocaleString();
+  }
+
+  dsRenderConvBanner(can, cannot);
 
   var detail = types.length
     ? '<div class="row"><span class="nm"><small><b>What Google says it will convert</b> — ' +
@@ -719,6 +731,37 @@ function dsRenderClasses() {
       '<span class="sz">' + (r.b ? tmFmtBytes(r.b) : '~0') + '</span>' +
       '<span class="ag">' + r.n.toLocaleString() + (r.n === 1 ? ' file' : ' files') + '</span></div>';
   }).join('') + detail;
+}
+
+/*
+ * Natives are the one thing that silently cannot reach the NAS, so say it where
+ * it will be read. The desktop app now refuses to copy them at all, which is
+ * correct but leaves the user with a list and no next step — this is the step.
+ */
+function dsRenderConvBanner(can, cannot) {
+  var el = document.getElementById('convBanner');
+  if (!el) return;
+  if (!can && !cannot) { el.hidden = true; el.innerHTML = ''; return; }
+
+  el.hidden = false;
+  el.innerHTML =
+    '<b>' + (can + cannot).toLocaleString() + ' Google file(s) have no contents on disk.</b> ' +
+    'Storage Mapper cannot copy them — a Doc, Sheet or Vid is a few hundred bytes of ' +
+    'pointer, and the file itself only exists inside Google.' +
+    (can
+      ? '<div style="margin-top:6px"><b>' + can.toLocaleString() + '</b> can be exported into ' +
+        'real files, written beside the originals so they sync down and copy like anything else.</div>'
+      : '') +
+    (cannot
+      ? '<div style="margin-top:6px">' + cannot.toLocaleString() + ' cannot — Google offers no ' +
+        'export format, so no tool can produce a file. See <i>Migration classes</i>.</div>'
+      : '') +
+    (can
+      ? '<div style="margin-top:9px"><button class="btn" id="convBannerGo">⤓ Convert ' +
+        can.toLocaleString() + ' now…</button></div>'
+      : '');
+
+  if (can) document.getElementById('convBannerGo').addEventListener('click', dsOpenConvert);
 }
 
 /*
