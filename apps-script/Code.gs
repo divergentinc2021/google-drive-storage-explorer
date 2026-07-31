@@ -544,6 +544,35 @@ function faviconCandidates_() {
  * one, so until the cache expires the chips hand out a URL that 404s. Twenty
  * minutes is the worst case; this makes it none.
  */
+/*
+ * Called on every page load, but it does NOT fetch on every page load.
+ *
+ * "Refresh each time the page opens" and "cache" contradict each other, and the
+ * cache is not decoration: Apps Script egresses through addresses shared with
+ * every other script Google runs, against an unauthenticated GitHub limit of 60
+ * requests an hour. Being rate-limited fails closed — latestRelease_ returns
+ * null and the chips fall back to constants — so refetching per load would
+ * trade a stale link for no link at all on a busy day.
+ *
+ * A floor makes both true: this is safe to call as often as you like, and it
+ * reaches GitHub at most once every ten minutes per repo. Six requests an hour
+ * per repo, whoever is looking, because the cache is script-wide.
+ */
+var RELEASE_REFRESH_FLOOR_MS = 10 * 60 * 1000;
+
+function refreshReleases() {
+  var cache = CacheService.getScriptCache();
+  var stamp = Number(cache.get('gh:lastRefresh') || 0);
+  var due = !stamp || (Date.now() - stamp) > RELEASE_REFRESH_FLOOR_MS;
+
+  if (due) {
+    SIBLING_APPS_RAW.forEach(function (a) { cache.remove('gh:' + a.repo); });
+    cache.put('gh:lastRefresh', String(Date.now()), 21600);
+  }
+  // siblingApps_ refetches for whatever was just cleared and reuses the rest.
+  return { refetched: due, apps: siblingApps_() };
+}
+
 function refreshReleaseCache() {
   var cache = CacheService.getScriptCache();
   var out = SIBLING_APPS_RAW.map(function (a) {
