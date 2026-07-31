@@ -1704,8 +1704,21 @@ function dsShowRclone() {
 }
 
 function dsDialog(html) {
-  document.getElementById('dlgBody').innerHTML = html;
+  var body = document.getElementById('dlgBody');
+  body.innerHTML = html;
   var d = document.getElementById('dlg');
+  /*
+   * The dialog ships a permanent Close in a <form method="dialog">. That is
+   * right for a plain message and wrong the moment the content brings its own
+   * footer — the Convert dialog showed its own Cancel/Convert aligned right and
+   * this one stranded below them on the left.
+   *
+   * Done here rather than only in CSS: the stylesheet rule needs :has(), and a
+   * layout fault that depends on selector support is one that comes back on
+   * some machine later. Setting the attribute is unconditional.
+   */
+  var form = d.querySelector('form');
+  if (form) form.hidden = !!body.querySelector('.dlgrow');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
 }
 
