@@ -1718,17 +1718,16 @@ function dsRenderApps() {
          * attribute does not help either: it is ignored cross-origin.
          */
         '<span class="al">' +
-          (a.drive
-            ? '<a href="' + dsEsc(a.drive) + '" target="_blank" rel="noopener">⤓ Download the installer</a>'
-            : '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">⤓ Get it from GitHub</a>') +
+          '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download the installer</a>' +
           '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
+          (a.drive
+            ? '<a href="' + dsEsc(a.drive) + '" target="_blank" rel="noopener">Drive copy</a>'
+            : '') +
         '</span>' +
-        '<span class="an-note">' +
-        (a.drive
-          ? dsEsc(a.asset || '') + ' — shared with everyone at uwc.ac.za.'
-          : 'Not published to Drive yet, so this link goes to GitHub — which needs ' +
-            'access to the private <code>divergentinc2021</code> repo. Ask Laurent to run ' +
-            '<code>publishInstaller(\'' + dsEsc(a.key) + '\')</code>.') +
+        '<span class="an-note">' + dsEsc(a.asset || '') +
+        (a.live
+          ? ' — newest release, read from GitHub.'
+          : ' — GitHub could not be reached, so this is the last version this app knew of.') +
         '</span>' +
       '</span></span>';
   }).join('');
