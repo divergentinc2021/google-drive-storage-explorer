@@ -1852,6 +1852,13 @@ function dsRenderApps() {
          */
         '<span class="al">' +
           '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download the installer</a>' +
+          /*
+           * 'All releases' is the escape hatch and was removed in v26 as
+           * redundant. It is not: the release workflow deletes old releases, so
+           * a cached direct link points at a version that no longer exists and
+           * 404s. This URL cannot go stale, whatever the cache is holding.
+           */
+          '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">All releases</a>' +
           '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
           (a.drive
             ? '<a href="' + dsEsc(a.drive) + '" target="_blank" rel="noopener">Drive copy</a>'
