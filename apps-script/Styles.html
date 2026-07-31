@@ -464,7 +464,13 @@ select {
 @media (max-width: 900px) { .apps { display: none; } }
 
 /* ── conversion ─────────────────────────────────────────────────────────── */
-.convbanner { border-color: var(--warning); background: color-mix(in oklab, var(--warning) 9%, var(--surface-1)); }
+/* The Google-native tile carries the convert action, so it needs a little room
+   under the figure and a border that says there is something to do here. */
+.tile.act { border-color: color-mix(in oklab, var(--warning) 45%, var(--border)); }
+.tile .ta { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+.tile .ta .btn { padding: 4px 10px; font-size: 11px; }
+.tile .tdone { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .tdone.ok { color: var(--good); font-weight: 600; }
 /* Count on the side rail. Absolutely placed so it cannot widen the rail — the
    labels already sit inside 74px and a badge in flow would push them out. */
 .siderail button { position: relative; }
