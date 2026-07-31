@@ -167,16 +167,25 @@ function dsOnBoot(b) {
     (b.quota.limit ? ' of ' + tmFmtBytes(b.quota.limit) : '') + ' used';
 
   var sel = document.getElementById('scope');
+  // Remember the real default rather than assuming one. Opening the picker and
+  // cancelling restores this, and a hardcoded fallback silently changed the
+  // scope the moment the option order changed.
+  DS_LAST_SCOPE = sel.value;
   (b.drives || []).forEach(function (d) {
     var o = document.createElement('option');
     o.value = 'drive:' + d.id;
     o.textContent = 'Shared drive: ' + d.name;
     sel.appendChild(o);
   });
-  // The picker's way back in, so multi-select is not a first-run-only feature.
+  /*
+   * The picker's only way in now that it does not open by itself, so it has to
+   * say what it is for. "Choose several…" undersold it: this is also the only
+   * route to a FOLDER inside a drive, which is what matches a Storage Mapper
+   * copy.
+   */
   var pick = document.createElement('option');
   pick.value = '__pick__';
-  pick.textContent = '⋯ Choose several…';
+  pick.textContent = '⋯ Pick folders, or several at once…';
   sel.appendChild(pick);
 
   dsRenderApps();
@@ -204,11 +213,18 @@ function dsOnBoot(b) {
   dsRenderDrives();
   document.getElementById('legend').innerHTML = tmLegendHtml();
 
-  // Ask what to map straight away — the shared drives are only known now, and a
-  // dropdown above the fold is the thing people miss and then scan the wrong scope.
-  // The desktop build asks about disks instead, and sets this so there is one
-  // startup dialog rather than two stacked on top of each other.
-  if (!window.DS_SKIP_PICKER) dsShowPicker();
+  /*
+   * The picker no longer opens by itself.
+   *
+   * It was here because the shared drives are only known once the bootstrap
+   * lands, and a dropdown above the fold is easy to miss. But this page gets
+   * reloaded constantly — after a deploy, to re-read the quota, to start over —
+   * and a modal that must be dismissed before anything can be seen stops being
+   * guidance and becomes a toll on every visit.
+   *
+   * Scope now defaults to "Everything I can see", the common scan, and the
+   * picker is one click away in that dropdown for folders or several targets.
+   */
 }
 
 function dsFail(err) {
