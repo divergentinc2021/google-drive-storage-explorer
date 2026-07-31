@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v34';
+var APP_VERSION = 'v35';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -428,10 +428,42 @@ function publishFavicon(access) {
    */
   var out = { ok: true, fileId: file.getId(), access: String(who), url: faviconUrl_() };
   Logger.log(JSON.stringify(out, null, 2));
-  Logger.log('Now hard-reload the web app. If the tab still shows Google\'s icon, ' +
-             'run publishFavicon(\'anyone\') — the CDN may not serve a ' +
-             'domain-restricted image to an unauthenticated favicon request.');
+  Logger.log(access === 'anyone'
+    ? 'Published link-readable. Hard-reload the web app; browsers cache favicons '
+      + 'independently of pages, so try a fresh tab if it looks unchanged.'
+    : 'Domain-only. A browser fetches a favicon WITHOUT credentials, so this URL '
+      + 'will answer it with a Google sign-in page rather than the image — run '
+      + 'publishFaviconPublic from the dropdown to fix that.');
   return out;
+}
+
+/*
+ * Zero-argument wrappers, because the editor's Run button CANNOT PASS
+ * ARGUMENTS. It calls whatever is selected in the dropdown with none, so
+ * publishFavicon('anyone') is not something anyone can actually run from there
+ * — the instruction to do so was impossible to follow.
+ *
+ * Anything meant to be run by hand needs a no-argument entry point with a name
+ * that says what it does, because the dropdown is the entire interface.
+ */
+
+/**
+ * Publish the icon so a browser can fetch it WITHOUT being signed in.
+ *
+ * Needed because a favicon request carries no credentials: with domain sharing
+ * the CDN answered one with a Google sign-in page — HTML, not a PNG — so the
+ * tab stayed blank. Measured, not assumed.
+ *
+ * It is one 32x32 copy of the app icon, artwork that already ships in a public
+ * GitHub repo and a Chrome Web Store listing. Link-only: no folder, no listing.
+ */
+function publishFaviconPublic() {
+  return publishFavicon('anyone');
+}
+
+/** Back to domain-only, if the public copy is ever unwanted. */
+function publishFaviconDomainOnly() {
+  return publishFavicon('domain');
 }
 
 /** Is an icon published, and what is it? Run this to check without republishing. */
