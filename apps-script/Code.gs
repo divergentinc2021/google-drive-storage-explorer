@@ -25,8 +25,8 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v9';
-var APP_UPDATED = '2026-07-30';
+var APP_VERSION = 'v10';
+var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
 // A UI that ships separately from its backend must describe the BACKEND.
@@ -110,8 +110,37 @@ function include(name) {
 
 // ─── bootstrap ───────────────────────────────────────────────────────────────
 /** Quota + config + capability flags, so the UI knows what the server can do. */
+/*
+ * Which Google types can actually be exported, ACCORDING TO GOOGLE.
+ *
+ * This used to be a hand-written table in Dashboard.html, and a hand-written
+ * table of Google's capabilities is wrong the day Google ships a new type. It
+ * already was: Google Vids was missing, and the sibling desktop app hit the same
+ * gap from the other side — it offered six .gvid stubs for copying, robocopy
+ * failed every one with "Incorrect function", and the files could never transfer
+ * because a native has no bytes behind it.
+ *
+ * about.exportFormats is the authoritative map and it costs one field on a call
+ * the bootstrap already makes. Nothing here decides what is exportable any more;
+ * it reports what Google says.
+ *
+ * Returned as mime -> [formats] so the UI can name the target extension, and
+ * so "no export path" means Google offered none rather than nobody added it.
+ */
+function exportFormatMap_(about) {
+  var raw = about.exportFormats || {};
+  var out = {};
+  Object.keys(raw).forEach(function (mime) {
+    if (mime.indexOf('application/vnd.google-apps.') !== 0) return;
+    out[mime.slice(28)] = raw[mime] || [];
+  });
+  return out;
+}
+
 function getBootstrap() {
-  var about = Drive.About.get({ fields: 'storageQuota,user(emailAddress,displayName)' });
+  var about = Drive.About.get({
+    fields: 'storageQuota,user(emailAddress,displayName),exportFormats'
+  });
   var q = about.storageQuota || {};
   var drives = [];
   if (V_SHARED_DRIVES) {
@@ -143,6 +172,7 @@ function getBootstrap() {
     driveCount: drives.length,
     config: getConfig(),
     caps: { nasVerify: V_NAS_VERIFY, sharedDrives: V_SHARED_DRIVES },
+    exportFormats: exportFormatMap_(about),
     isOwner: isOwner_(),
     rootId: Drive.Files.get('root', { fields: 'id' }).id,
     version: APP_VERSION,

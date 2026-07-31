@@ -7,3 +7,10 @@ node_modules/
 
 # clasp credentials live in ~/.clasprc.json and must never land here.
 .clasprc.json
+
+# Generated at build time by desktop/build-ui.mjs from apps-script/. It is
+# packaged by electron-builder but must never be committed: a stale copy in git
+# would silently ship instead of the freshly built one. It reached main once,
+# through a `git add -A` that swept it up because nothing here excluded it.
+desktop/ui/
+desktop/dist/

@@ -19,10 +19,39 @@ var DS_DRIVE_STATS = {};   // driveId -> {bytes, files, folders}, measured on de
 
 var KIND_FOLDER = 0, KIND_BINARY = 1, KIND_NATIVE = 2, KIND_SHORTCUT = 3;
 
-/** rclone can export these natives; the rest have to stay in Drive. */
-var EXPORTABLE = {
-  'document': 'docx', 'spreadsheet': 'xlsx', 'presentation': 'pptx',
-  'drawing': 'svg', 'script': 'json', 'jam': 'pdf'
+/*
+ * Preferred target per Google type, used ONLY to pick one format out of the
+ * several Google offers. Whether a type is exportable at all is not decided
+ * here any more — that comes from the server as DS_BOOT.exportFormats, which is
+ * Drive's own about.exportFormats.
+ *
+ * The old version of this object WAS the exportable list, and it was a
+ * hand-written guess at Google's capabilities. It had no entry for Google Vids,
+ * which is exactly the gap that made the desktop app offer six .gvid stubs for
+ * copying and fail all six.
+ */
+var PREFERRED_EXPORT = {
+  'document': ['docx', 'odt', 'pdf'],
+  'spreadsheet': ['xlsx', 'ods', 'csv'],
+  'presentation': ['pptx', 'odp', 'pdf'],
+  'drawing': ['svg', 'png', 'pdf'],
+  'script': ['json'],
+  'jam': ['pdf'],
+  'vid': ['mp4']
+};
+
+/** mime subtype -> extension Google will actually give us, or null. */
+var MIME_EXT = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+  'application/vnd.oasis.opendocument.presentation': 'odp',
+  'application/pdf': 'pdf', 'text/csv': 'csv', 'image/svg+xml': 'svg',
+  'image/png': 'png', 'image/jpeg': 'jpg', 'text/plain': 'txt',
+  'application/vnd.google-apps.script+json': 'json',
+  'application/zip': 'zip', 'video/mp4': 'mp4', 'text/html': 'html'
 };
 
 // ── boot ────────────────────────────────────────────────────────────────────
@@ -566,10 +595,27 @@ function dsSummary() {
   return s;
 }
 
+/**
+ * What Google will actually convert this native into, or null if it will not.
+ *
+ * Asks the server's copy of about.exportFormats first. Falls back to nothing —
+ * NOT to a guess: claiming an export path that does not exist is what sends
+ * someone off to copy a file that can never be produced.
+ */
 function dsExportAs(mime) {
   if (!mime || mime.indexOf('application/vnd.google-apps.') !== 0) return null;
   var key = mime.slice(28);
-  return EXPORTABLE[key] || null;
+  var offered = DS_BOOT && DS_BOOT.exportFormats ? DS_BOOT.exportFormats[key] : null;
+  if (!offered || !offered.length) return null;
+
+  var exts = offered.map(function (m) { return MIME_EXT[m] || null; }).filter(Boolean);
+  if (!exts.length) return null;
+  // Prefer the format we would actually want, else take whatever Google leads with.
+  var want = PREFERRED_EXPORT[key] || [];
+  for (var i = 0; i < want.length; i++) {
+    if (exts.indexOf(want[i]) !== -1) return want[i];
+  }
+  return exts[0];
 }
 
 // ── lists ───────────────────────────────────────────────────────────────────
@@ -619,18 +665,46 @@ function dsRenderClasses() {
     { pill: 'good', icon: '✓', t: 'Active binaries', n: s.activeFiles,
       b: s.activeBytes, d: 'Touched recently — leave in Drive.' },
     { pill: 'warning', icon: '⤓', t: 'Native, exportable', n: s.nativeExportable,
-      b: 0, d: 'rclone exports these as docx/xlsx/pptx. Copy for backup; deleting frees nothing.' },
+      b: 0, d: 'Google will convert these. Copy for backup; deleting frees nothing.' },
     { pill: 'serious', icon: '⚑', t: 'Native, not exportable', n: s.nativeStuck,
-      b: 0, d: 'Forms, Sites, My Maps — no export path. These must stay in Drive.' },
+      b: 0, d: 'Google offers no export format — these must stay in Drive.' },
     { pill: 'good', icon: '↗', t: 'Shortcuts', n: s.shortcuts,
       b: 0, d: 'Pointers only — zero storage.' }
   ];
+  /*
+   * Per-type breakdown, straight from Drive's about.exportFormats. This is the
+   * screen that answers "can this actually be converted?" for a specific type,
+   * with Google's own answer rather than an assumption baked into this file.
+   */
+  var byType = {};
+  DS_ALL.forEach(function (n) {
+    if (n.kind !== KIND_NATIVE || !n.mime) return;
+    var key = n.mime.slice(28);
+    if (!byType[key]) byType[key] = { key: key, n: 0, as: dsExportAs(n.mime) };
+    byType[key].n++;
+  });
+  var types = Object.keys(byType).map(function (k) { return byType[k]; })
+    .sort(function (a, b) { return b.n - a.n; });
+
+  var detail = types.length
+    ? '<div class="row"><span class="nm"><small><b>What Google says it will convert</b> — ' +
+      'reported by the Drive API for this account, not assumed here.</small></span></div>' +
+      types.map(function (t) {
+        return '<div class="row"><span class="pill ' + (t.as ? 'warning' : 'serious') + '">' +
+          dsEsc(t.key) + '</span><span class="nm"><small>' +
+          (t.as ? 'exports as <b>.' + dsEsc(t.as) + '</b>'
+                : 'Google offers no export format — nothing can be produced from it') +
+          '</small></span><span class="ag">' + t.n.toLocaleString() +
+          (t.n === 1 ? ' file' : ' files') + '</span></div>';
+      }).join('')
+    : '';
+
   document.getElementById('classList').innerHTML = rows.map(function (r) {
     return '<div class="row"><span class="pill ' + r.pill + '">' + r.icon + ' ' + dsEsc(r.t) + '</span>' +
       '<span class="nm"><small>' + dsEsc(r.d) + '</small></span>' +
       '<span class="sz">' + (r.b ? tmFmtBytes(r.b) : '~0') + '</span>' +
       '<span class="ag">' + r.n.toLocaleString() + (r.n === 1 ? ' file' : ' files') + '</span></div>';
-  }).join('');
+  }).join('') + detail;
 }
 
 /*
