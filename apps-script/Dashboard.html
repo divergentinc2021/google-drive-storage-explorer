@@ -82,7 +82,10 @@ function dsInit() {
   document.getElementById('btnUp').addEventListener('click', dsZoomUp);
   document.getElementById('btnRelief').addEventListener('click', dsToggleRelief);
   document.getElementById('btnCsv').addEventListener('click', dsExportCsv);
-  document.getElementById('btnRclone').addEventListener('click', dsShowRclone);
+  document.getElementById('btnRclone').addEventListener('click', function (ev) {
+    ev.preventDefault();   // it is an <a> now, so it would jump to the top
+    dsShowRclone();
+  });
   document.getElementById('btnTrash').addEventListener('click', dsTrashSelected);
   document.getElementById('btnMeasure').addEventListener('click', dsMeasureAll);
   document.getElementById('deadAfter').addEventListener('change', function () {
@@ -177,7 +180,6 @@ function dsOnBoot(b) {
   dsRenderQuota();   // account figures need no scan — show them immediately
   dsRenderTiles();
   dsRenderDrives();
-  dsRenderGateNote();
   document.getElementById('legend').innerHTML = tmLegendHtml();
 
   // Ask what to map straight away — the shared drives are only known now, and a
@@ -401,21 +403,28 @@ function dsCreepStop() {
   if (DS_CREEP) { clearInterval(DS_CREEP); DS_CREEP = null; }
 }
 
-function dsCreepStart(from, ceiling) {
+/**
+ * @param from      percentage to start from
+ * @param ceiling   percentage it approaches but never reaches
+ * @param barId     the <i> to widen; defaults to the scan bar
+ * @param say       called with elapsed seconds every 15s, for a log line
+ */
+function dsCreepStart(from, ceiling, barId, say) {
   dsCreepStop();
   DS_CREEP_V = from;
   DS_CREEP_T0 = Date.now();
   DS_CREEP_SAID = 0;
   DS_CREEP = setInterval(function () {
     DS_CREEP_V += (ceiling - DS_CREEP_V) * 0.05;
-    var el = document.getElementById('progBar');
+    var el = document.getElementById(barId || 'progBar');
     if (el) el.style.width = DS_CREEP_V.toFixed(1) + '%';
 
     // A line every 15s, so the log shows life too rather than one frozen entry.
     var secs = Math.floor((Date.now() - DS_CREEP_T0) / 1000);
     if (secs >= 15 && secs - DS_CREEP_SAID >= 15) {
       DS_CREEP_SAID = secs;
-      dsLog('still waiting on Drive — ' + secs + 's so far', 'dim');
+      if (say) say(secs);
+      else dsLog('still waiting on Drive — ' + secs + 's so far', 'dim');
     }
   }, 300);
 }
@@ -437,6 +446,7 @@ function dsScanDone() {
   DS_STACK = [DS_TREE];
   tmSetRoot(DS_TREE);
   dsRenderCrumbs();
+  document.getElementById('btnCsv').disabled = false;   // there is now a scan to export
   // If the parallel check has already answered, the tile shows the real count
   // on its first paint. If not, its callback repaints when it lands.
   DS_CONV_STATUS = dsComputeConvStatus();
@@ -1492,18 +1502,43 @@ function dsRunConvert() {
    * and then skipped 160, which read as though it were starting over.
    */
   var total = DS_CONV_DONE + DS_CONV_QUEUE.length + DS_CONV_FAILED.length + DS_CONV_SKIPPED;
-  dsDialog('<h3>Converting ' + total.toLocaleString() +
-    (total === 1 ? ' file…' : ' remaining files…') + '</h3>' +
-    '<p class="hint">' + DS_CONV_DONE.toLocaleString() + ' of ' + total.toLocaleString() +
-    ' done. Each batch runs for about 90 seconds — leave this tab open.</p>' +
-    '<div class="bar"><i style="width:' +
-    (total ? Math.round(100 * DS_CONV_DONE / total) : 0) + '%"></i></div>' +
-    '<div class="runlog inline" id="convLog"></div>');
+  var pct = total ? (100 * DS_CONV_DONE / total) : 0;
+
+  /*
+   * Built ONCE, then updated in place. Re-rendering the whole dialog per batch
+   * threw away the log's scroll position every 90 seconds, so a run you were
+   * reading kept yanking itself back to the bottom.
+   */
+  if (!document.getElementById('convBar')) {
+    dsDialog('<h3 id="convHead"></h3>' +
+      '<p class="hint" id="convHint"></p>' +
+      '<div class="bar"><i id="convBar" style="width:0%"></i></div>' +
+      '<div class="runlog inline" id="convLog"></div>');
+  }
+  document.getElementById('convHead').textContent = 'Converting ' + total.toLocaleString() +
+    (total === 1 ? ' file…' : ' remaining files…');
+  document.getElementById('convHint').textContent =
+    DS_CONV_DONE.toLocaleString() + ' of ' + total.toLocaleString() +
+    ' done. Each batch runs for about 90 seconds — leave this tab open.';
+  document.getElementById('convBar').style.width = pct.toFixed(1) + '%';
   dsPaintConvLog();
+
+  /*
+   * A batch runs for up to 90 seconds and reports nothing until it returns, so
+   * the bar stood still for the whole of it — the same stall the scan had. It
+   * creeps toward the fraction ONE batch would reach, never past it, and the
+   * real figure replaces the estimate the moment the batch answers.
+   */
+  var perBatch = total ? (100 / total) * Math.max(1, DS_CONV_QUEUE.length) : 0;
+  dsCreepStart(pct, Math.min(97, pct + Math.max(4, perBatch * 0.8)), 'convBar', function (secs) {
+    DS_CONV_LOG.push({ cls: 'dim', text: 'still working — ' + secs + 's into this batch' });
+    dsPaintConvLog();
+  });
 
   var t0 = Date.now();
   google.script.run
     .withSuccessHandler(function (r) {
+      dsCreepStop();   // the batch answered; the estimate is superseded
       var secs = ((Date.now() - t0) / 1000).toFixed(0);
       /*
        * Per FILE, not per batch. A batch line only says a number moved; naming
@@ -1534,6 +1569,7 @@ function dsRunConvert() {
       else dsConvertDone();
     })
     .withFailureHandler(function (err) {
+      dsCreepStop();
       DS_CONV_LOG.push({ cls: 'bad', text: 'The batch failed: ' + (err && err.message || err) });
       dsConvertDone();
     })
@@ -1551,6 +1587,7 @@ function dsPaintConvLog() {
 }
 
 function dsConvertDone() {
+  dsCreepStop();
   dsDialog('<h3>Conversion finished</h3>' +
     '<div class="note"><b>' + DS_CONV_DONE.toLocaleString() + '</b> file(s) converted' +
     (DS_CONV_FELLBACK ? ' (<b>' + DS_CONV_FELLBACK + '</b> in a lighter format, because the ' +
@@ -1820,17 +1857,12 @@ function dsRenderApps() {
   }).join('');
 }
 
-function dsRenderGateNote() {
-  var el = document.getElementById('gateNote');
-  if (DS_BOOT && DS_BOOT.caps.nasVerify) {
-    el.innerHTML = '<b>NAS verification is ON.</b> The server will refuse to trash any file the ' +
-      'QNAP agent has not reported as backed up.';
-  } else {
-    el.innerHTML = '<b>NAS verification is OFF</b> — the QNAP agent is not reporting yet, so nothing here ' +
-      'is confirmed backed up. Trash is reversible and Drive keeps it for 30 days, but it still ' +
-      'counts against quota until you empty it. Copy to the NAS first, verify, then empty the trash by hand.';
-  }
-}
+/*
+ * The NAS-verification banner is gone — see the note in Index.html. The SERVER
+ * gate is untouched: trashFiles still refuses anything getVerifiedIds has not
+ * confirmed whenever V_NAS_VERIFY is on, and both confirms still say plainly
+ * that nothing is verified while it is off. Only the ambient announcement went.
+ */
 
 // ── actions ─────────────────────────────────────────────────────────────────
 function dsTrashSelected() {

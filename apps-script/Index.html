@@ -49,6 +49,14 @@
         </select>
       </label>
       <button class="btn primary" id="btnScan">Scan Drive</button>
+      <!--
+        The manifest covers the WHOLE scan, not the reclaimable list it used to
+        sit under, and it is the handoff to Storage Mapper: loading it there is
+        the only way that app gets md5 checksums. A global export belongs beside
+        the global action, not inside one tab.
+      -->
+      <button class="btn ghost" id="btnCsv" disabled
+              title="One row per file, with checksums — load this in Storage Mapper">⤓ Manifest CSV</button>
       <button class="btn ghost" id="btnTheme" title="Toggle theme">◐</button>
     </div>
   </header>
@@ -183,6 +191,18 @@
           They are an <i>export</i> job, not a space job.
         </p>
         <div class="list" id="classList"></div>
+        <!--
+          rclone is an ALTERNATIVE to this whole toolchain — it syncs Drive to
+          the NAS from the QNAP itself and exports natives on the way. It sat in
+          the Reclaimable panel, where it had nothing to do with the list it was
+          under. Here it is at least next to the problem it solves, and demoted
+          to a link because Convert plus Storage Mapper is the route this app
+          actually supports.
+        -->
+        <p class="hint" style="margin-top:8px">
+          Prefer to sync from the NAS instead?
+          <a href="#" id="btnRclone">Show the rclone setup</a>
+        </p>
       </div>
 
       <div class="tabpane" id="tabDrives" role="tabpanel" hidden>
@@ -211,12 +231,16 @@
           <h2>Reclaimable <span class="count" id="bigBytes"></span></h2>
           <button class="btn danger sm" id="btnTrash" disabled>Trash selected</button>
         </div>
-        <p class="hint">Biggest dead binaries. These are the only rows that free quota.</p>
-        <div class="rowbtns">
-          <button class="btn ghost sm" id="btnCsv">⤓ Manifest CSV</button>
-          <button class="btn ghost sm" id="btnRclone">rclone commands</button>
-        </div>
-        <div id="gateNote" class="note"></div>
+        <!--
+          The NAS-verification block that used to sit here is gone. It announced
+          the state of a QNAP agent that does not exist, in three lines, inside a
+          380px rail — and everything it warned about is already said at the
+          point of action: both trash confirms state that nothing is verified as
+          backed up and that quota is not freed until the trash is emptied. A
+          warning where the click happens beats an ambient one above it.
+        -->
+        <p class="hint">Biggest dead binaries — the only rows that free quota. Trashing is
+          reversible for 30 days, and still billed until you empty the trash yourself.</p>
         <div class="list tablelist" id="bigList"></div>
       </div>
     </div>
