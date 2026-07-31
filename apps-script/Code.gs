@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v10';
+var APP_VERSION = 'v11';
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -427,6 +427,197 @@ function getVerifiedIds() {
   } catch (e) {
     return { enabled: true, ids: [], receivedAt: null, error: String(e) };
   }
+}
+
+// ─── converting natives into real files ──────────────────────────────────────
+/*
+ * A Google-native file has no bytes. Drive for Desktop shows a .gdoc/.gvid stub
+ * of a few hundred bytes that cannot even be read — the sibling desktop app hit
+ * exactly this, offered six .gvid stubs for copying, and robocopy failed every
+ * one with "Incorrect function". No amount of work on the desktop side fixes it:
+ * the content only exists inside Google.
+ *
+ * This is the half that can only happen here. Export through Drive, write the
+ * result back into Drive BESIDE the original, and Drive for Desktop syncs it
+ * down as a real file — at which point the desktop app copies it to the NAS like
+ * anything else, with no new credential anywhere and no second sign-in.
+ *
+ * Beside the original, not into a staging tree, because the folder structure is
+ * then already correct: the converted file lands at the same relative path the
+ * NAS mirror expects, so nothing has to be remapped afterwards.
+ *
+ * ADDITIVE ONLY. It creates files; it never modifies, moves or trashes one, and
+ * it skips anything already converted, so running it twice is safe.
+ */
+var CONVERT_BUDGET_MS = 4.5 * 60 * 1000;  // Apps Script kills at 6; leave room to return
+
+/** Extension for an export mime, or null if we would not know what to call it. */
+function extForMime_(mime) {
+  var MAP = {
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+    'application/vnd.oasis.opendocument.presentation': 'odp',
+    'application/pdf': 'pdf', 'text/csv': 'csv', 'image/svg+xml': 'svg',
+    'image/png': 'png', 'image/jpeg': 'jpg', 'text/plain': 'txt',
+    'application/vnd.google-apps.script+json': 'json',
+    'application/zip': 'zip', 'video/mp4': 'mp4', 'text/html': 'html'
+  };
+  return MAP[mime] || null;
+}
+
+/**
+ * Which export Google offers for this native type, preferring the format worth
+ * keeping. Returns null when Google offers none — in which case the file simply
+ * cannot be converted and saying so is the only honest answer.
+ */
+function chooseExport_(mime, exportFormats) {
+  var offered = exportFormats[mime] || [];
+  var PREF = {
+    'application/vnd.google-apps.document': ['docx', 'odt', 'pdf'],
+    'application/vnd.google-apps.spreadsheet': ['xlsx', 'ods', 'csv'],
+    'application/vnd.google-apps.presentation': ['pptx', 'odp', 'pdf'],
+    'application/vnd.google-apps.drawing': ['svg', 'png', 'pdf'],
+    'application/vnd.google-apps.script': ['json'],
+    'application/vnd.google-apps.jam': ['pdf'],
+    'application/vnd.google-apps.vid': ['mp4']
+  };
+  var byExt = {};
+  offered.forEach(function (m) {
+    var e = extForMime_(m);
+    if (e && !byExt[e]) byExt[e] = m;
+  });
+  var want = PREF[mime] || [];
+  for (var i = 0; i < want.length; i++) {
+    if (byExt[want[i]]) return { mime: byExt[want[i]], ext: want[i] };
+  }
+  var keys = Object.keys(byExt);
+  return keys.length ? { mime: byExt[keys[0]], ext: keys[0] } : null;
+}
+
+/**
+ * What WOULD be converted, without converting anything.
+ *
+ * Separate from the run on purpose: this writes files into someone's Drive, and
+ * the first thing anyone should be able to do is see the list.
+ */
+function previewConversion(ids) {
+  var about = Drive.About.get({ fields: 'exportFormats' });
+  var fmts = about.exportFormats || {};
+  var out = { convertible: [], impossible: [], missing: 0 };
+
+  (ids || []).slice(0, 2000).forEach(function (id) {
+    var f;
+    try {
+      f = Drive.Files.get(id, { fields: 'id,name,mimeType,parents', supportsAllDrives: true });
+    } catch (e) { out.missing++; return; }
+    if (String(f.mimeType).indexOf('application/vnd.google-apps.') !== 0) return;
+    var pick = chooseExport_(f.mimeType, fmts);
+    if (pick) out.convertible.push({ id: f.id, name: f.name, as: pick.ext });
+    else out.impossible.push({ id: f.id, name: f.name, kind: f.mimeType.slice(28) });
+  });
+  return out;
+}
+
+/**
+ * Convert a batch. Returns `remaining` so the caller can drive it in chunks —
+ * the same continuation pattern the scan uses, because one Apps Script call
+ * cannot outlive six minutes and a Drive with hundreds of Docs will not fit.
+ */
+function convertNatives(ids) {
+  var started = Date.now();
+  var about = Drive.About.get({ fields: 'exportFormats' });
+  var fmts = about.exportFormats || {};
+  var token = ScriptApp.getOAuthToken();
+  var done = [], skipped = [], failed = [], remaining = [];
+
+  ids = ids || [];
+  for (var i = 0; i < ids.length; i++) {
+    if (Date.now() - started > CONVERT_BUDGET_MS) {
+      remaining = ids.slice(i);
+      break;
+    }
+    var id = ids[i];
+    var f;
+    try {
+      f = Drive.Files.get(id, { fields: 'id,name,mimeType,parents', supportsAllDrives: true });
+    } catch (e) {
+      failed.push({ id: id, name: id, why: 'could not read the file: ' + e.message });
+      continue;
+    }
+
+    var pick = chooseExport_(f.mimeType, fmts);
+    if (!pick) {
+      failed.push({ id: id, name: f.name, why: 'Google offers no export format for this type' });
+      continue;
+    }
+    var newName = f.name + '.' + pick.ext;
+    var parent = (f.parents && f.parents[0]) || null;
+    if (!parent) {
+      failed.push({ id: id, name: f.name, why: 'the file has no parent folder to write beside' });
+      continue;
+    }
+
+    // Already converted on an earlier run — additive means never doing it twice.
+    try {
+      var q = "name = '" + String(newName).replace(/'/g, "\\'") + "' and '" +
+              parent + "' in parents and trashed = false";
+      var hit = Drive.Files.list({
+        q: q, fields: 'files(id)', pageSize: 1,
+        supportsAllDrives: true, includeItemsFromAllDrives: true, corpora: 'allDrives'
+      });
+      if (hit.files && hit.files.length) {
+        skipped.push({ id: id, name: newName, why: 'already converted' });
+        continue;
+      }
+    } catch (e) { /* the check is an optimisation; a failure here is not fatal */ }
+
+    /*
+     * UrlFetchApp rather than DriveApp.getBlob(): getBlob() on a native returns
+     * a PDF whatever the file is, so a Sheet would silently arrive as a PDF
+     * instead of the .xlsx that was asked for. The export endpoint is the only
+     * way to name the format.
+     */
+    var resp;
+    try {
+      resp = UrlFetchApp.fetch(
+        'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+        '/export?mimeType=' + encodeURIComponent(pick.mime),
+        { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+      );
+    } catch (e) {
+      failed.push({ id: id, name: f.name, why: 'export request failed: ' + e.message });
+      continue;
+    }
+
+    var code = resp.getResponseCode();
+    if (code !== 200) {
+      var body = '';
+      try { body = resp.getContentText().slice(0, 300); } catch (e2) { body = ''; }
+      // 403 exportSizeLimitExceeded is the one everyone meets: Drive refuses to
+      // export anything over roughly 10 MB, and no transport change avoids it.
+      var why = /exportSizeLimitExceeded/.test(body)
+        ? 'too large for Drive to export (Google caps native export at about 10 MB) — ' +
+          'download it by hand from Google instead'
+        : 'Drive refused the export (HTTP ' + code + ')';
+      failed.push({ id: id, name: f.name, why: why });
+      continue;
+    }
+
+    try {
+      var blob = resp.getBlob().setName(newName);
+      var created = Drive.Files.create(
+        { name: newName, parents: [parent] }, blob, { supportsAllDrives: true }
+      );
+      done.push({ id: id, name: newName, newId: created.id, as: pick.ext });
+    } catch (e) {
+      failed.push({ id: id, name: f.name, why: 'could not save the converted file: ' + e.message });
+    }
+  }
+
+  return { done: done, skipped: skipped, failed: failed, remaining: remaining };
 }
 
 // ─── trash (reversible only) ─────────────────────────────────────────────────
