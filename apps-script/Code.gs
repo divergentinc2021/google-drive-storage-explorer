@@ -466,6 +466,84 @@ function publishFaviconDomainOnly() {
   return publishFavicon('domain');
 }
 
+/**
+ * What doGet is ACTUALLY serving.
+ *
+ * A <link rel="icon"> in Index.html cannot set the tab icon — the app is served
+ * inside a sandboxed iframe and the tab reads the outer page — so setFaviconUrl
+ * is the only lever, and the question is whether it is being applied. This runs
+ * doGet and reads it back off the HtmlOutput rather than reasoning about it.
+ *
+ * If servedFavicon matches stored, the server is doing its part and anything
+ * still wrong is the browser's favicon cache, which ignores page reloads. Check
+ * in a private window before believing otherwise.
+ */
+/*
+ * Which URL form will setFaviconUrl actually accept?
+ *
+ * doGet wrapped the call in a try/catch so a bad icon could never take the app
+ * down — and then swallowed the reason, so the tab stayed blank with no
+ * explanation anywhere. faviconCheck reported "(none set)" and could not say
+ * why. Each candidate is tried against a throwaway HtmlOutput here, and the one
+ * that survives is the one worth serving.
+ */
+function faviconCandidates_() {
+  var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
+  if (!id) return [];
+  return [
+    'https://lh3.googleusercontent.com/d/' + id + '=w64-h64',
+    'https://lh3.googleusercontent.com/d/' + id,
+    'https://drive.google.com/thumbnail?id=' + id + '&sz=w64',
+    'https://drive.google.com/uc?export=view&id=' + id
+  ];
+}
+
+function faviconProbe() {
+  var results = faviconCandidates_().map(function (u) {
+    try {
+      HtmlService.createHtmlOutput('<p>x</p>').setFaviconUrl(u);
+      return { url: u, accepted: true, error: '' };
+    } catch (e) {
+      return { url: u, accepted: false, error: e.message };
+    }
+  });
+  Logger.log(JSON.stringify(results, null, 2));
+  var ok = results.filter(function (r) { return r.accepted; });
+  Logger.log(ok.length
+    ? 'setFaviconUrl accepts ' + ok.length + ' of these. faviconUrl_ will use the first.'
+    : 'setFaviconUrl rejects every form — the errors above say why.');
+  return results;
+}
+
+function faviconCheck() {
+  var out;
+  try { out = doGet(); }
+  catch (e) { Logger.log('doGet threw: ' + e.message); return { error: e.message }; }
+
+  var info = {
+    stored: faviconUrl_(),
+    servedFavicon: (function () {
+      try { return out.getFaviconUrl() || '(none set)'; }
+      catch (e) { return '(getFaviconUrl unavailable: ' + e.message + ')'; }
+    })(),
+    servedTitle: (function () {
+      try { return out.getTitle() || '(none)'; } catch (e) { return '(unavailable)'; }
+    })()
+  };
+  info.matches = !!info.stored && info.stored === info.servedFavicon;
+  Logger.log(JSON.stringify(info, null, 2));
+  if (info.matches) {
+    Logger.log('The server is serving the icon. If the tab still shows Google\'s, it is '
+      + 'the browser favicon cache — open the app in a PRIVATE window to confirm.');
+  } else {
+    // "(none set)" means setFaviconUrl was called and REFUSED the URL, since
+    // doGet only skips it when nothing is stored. Say which forms it will take.
+    Logger.log('Not served. setFaviconUrl refused the URL — probing alternatives:');
+    info.probe = faviconProbe();
+  }
+  return info;
+}
+
 /** Is an icon published, and what is it? Run this to check without republishing. */
 function faviconStatus() {
   var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
@@ -497,11 +575,16 @@ function doGet() {
     .setTitle('Google Drive Storage Explorer')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  try {
-    var ico = faviconUrl_();
-    if (ico) out.setFaviconUrl(ico);
-  } catch (e) {
-    // rejected URL — serve the app without a custom icon rather than failing
+  /*
+   * Try each form until one is accepted. setFaviconUrl validates the URL and
+   * THROWS on one it dislikes, and a single hard-coded form was rejected — the
+   * catch then swallowed the reason and the tab was silently iconless. Serving
+   * the app still matters more than the icon, so the loop never rethrows.
+   */
+  var forms = faviconCandidates_();
+  for (var i = 0; i < forms.length; i++) {
+    try { out.setFaviconUrl(forms[i]); break; }
+    catch (e) { /* try the next shape */ }
   }
   return out;
 }
