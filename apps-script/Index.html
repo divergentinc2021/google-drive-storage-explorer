@@ -36,6 +36,9 @@
           <span class="ver" id="ver" title="Build currently being served"></span></h1>
         <p class="sub" id="acct">connecting…</p>
       </div>
+      <!-- The desktop tools, beside this app's own version. Filled by
+           dsRenderApps() from the server's SIBLING_APPS. -->
+      <div class="apps" id="apps"></div>
     </div>
     <div class="topactions">
       <label class="field">
@@ -54,6 +57,9 @@
     <div class="bar"><i id="progBar"></i></div>
     <span id="progText">Scanning…</span>
   </div>
+  <!-- What is actually happening, with elapsed times. A bar alone cannot tell
+       "Drive has not answered yet" apart from "nothing is happening". -->
+  <div class="runlog" id="runLog" hidden></div>
 
   <section class="panel quota" id="quotaPanel">
     <div class="panelhead">
@@ -110,16 +116,26 @@
       narrow, so horizontal tabs would either truncate their labels or steal the
       width the lists need.
     -->
+    <!--
+      Drawn icons rather than ⌛ ◲ ⇄ ☁. Those are typographic characters: the
+      font decides how they look, they arrive at four different optical weights,
+      and ⌛ renders as a colour emoji on Windows next to three thin glyphs. One
+      stroke weight and one grid is the whole difference.
+    -->
     <nav class="siderail" role="tablist" aria-label="Detail panels">
       <button class="on" role="tab" aria-selected="true" data-tab="tabDead">
-        <span class="ic" aria-hidden="true">⌛</span><span class="tl">Dead<br>folders</span></button>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v1.2"/><path d="M3 7.5V18a1.5 1.5 0 0 0 1.5 1.5H11"/><circle cx="17.2" cy="16.8" r="4.2"/><path d="M17.2 14.6v2.2l1.6 1"/></svg>
+        <span class="tl">Dead<br>folders</span></button>
       <button role="tab" aria-selected="false" data-tab="tabTypes">
-        <span class="ic" aria-hidden="true">◲</span><span class="tl">File<br>types</span></button>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 20 7.6 12 12 4 7.6z"/><path d="M4 12.2 12 16.6l8-4.4"/><path d="M4 16.6 12 21l8-4.4"/></svg>
+        <span class="tl">File<br>types</span></button>
       <button role="tab" aria-selected="false" data-tab="tabClasses">
-        <span class="ic" aria-hidden="true">⇄</span><span class="tl">Migration<br>classes</span>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h13"/><path d="M14 5.5l3 3-3 3"/><path d="M20 15.5H7"/><path d="M10 12.5l-3 3 3 3"/></svg>
+        <span class="tl">Migration<br>classes</span>
         <span class="rc" id="classCount" hidden></span></button>
       <button role="tab" aria-selected="false" data-tab="tabDrives">
-        <span class="ic" aria-hidden="true">☁</span><span class="tl">Shared<br>drives</span></button>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 18.5h9.6a3.8 3.8 0 0 0 .5-7.6 6.2 6.2 0 0 0-11.9 1.7 3.6 3.6 0 0 0 1.8 5.9z"/></svg>
+        <span class="tl">Shared<br>drives</span></button>
     </nav>
 
     <div class="sidebody">

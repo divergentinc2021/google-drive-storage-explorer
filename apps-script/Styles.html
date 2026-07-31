@@ -360,7 +360,13 @@ select {
   width: 100%; min-width: 0; overflow: hidden; hyphens: auto;
 }
 .siderail button .tl { min-width: 0; overflow-wrap: anywhere; }
-.siderail button .ic { font-size: 15px; line-height: 1; }
+/* Drawn icons, one stroke weight and one grid — see the note in Index.html.
+   Sized in px rather than em so they cannot inherit the 10px label size. */
+.siderail button .ic {
+  width: 19px; height: 19px; display: block;
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .siderail button:hover { background: var(--surface-1); color: var(--text-primary); }
 .siderail button.on { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
 .siderail button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
@@ -379,6 +385,74 @@ select {
 .tabpane .list { flex: 1; min-height: 0; overflow-y: auto; }
 .tabpane .panelhead { margin-bottom: 6px; }
 .tabpane .hint { margin: 0 0 8px; }
+
+/* ── running log ────────────────────────────────────────────────────────── */
+.runlog {
+  margin: 0 0 12px; max-height: 168px; overflow-y: auto;
+  background: var(--plane); border: 1px solid var(--border); border-radius: 9px;
+  padding: 7px 10px; font-size: 11px; line-height: 1.65;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.runlog.inline { margin: 10px 0 0; max-height: 210px; }
+.runlog .lg { color: var(--text-secondary); word-break: break-word; }
+.runlog .lg.ok { color: var(--text-primary); }
+.runlog .lg.bad { color: var(--critical); }
+.runlog .lg.dim { color: var(--muted); }
+.runlog .lt {
+  display: inline-block; min-width: 46px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── companion apps in the header ───────────────────────────────────────── */
+.apps { display: flex; gap: 9px; align-items: center; margin-left: 20px; flex-wrap: wrap; }
+/* Sized to sit alongside the app title, not to hide beside it: these are the
+   two tools that finish the job, and at 11px they read as footnotes. */
+.appchip {
+  position: relative; display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 13px 7px 9px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--plane); font-size: 13px; cursor: default; white-space: nowrap;
+}
+.appchip:hover, .appchip:focus-visible { border-color: var(--brand); background: var(--surface-1); }
+.appchip:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.appchip .am { width: 22px; height: 22px; flex: none; fill: var(--brand); color: var(--brand); }
+.appchip .an { font-weight: 620; color: var(--text-primary); }
+.appchip .av {
+  font-size: 11px; color: var(--text-secondary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The hover card holds real links, so it must stay open while the pointer
+ * travels into it. It is a CHILD of the chip and the chip keeps :hover for as
+ * long as the pointer is inside either — a sibling popover would close in the
+ * gap and the links could never be clicked. The gap is bridged by padding-top
+ * rather than a margin for the same reason.
+ */
+.appcard {
+  position: absolute; top: 100%; left: -6px; z-index: 70; width: 340px;
+  padding-top: 8px; display: none;
+}
+.appchip:hover .appcard, .appchip:focus-within .appcard, .appchip:focus .appcard { display: block; }
+.appcard > b, .appcard > span {
+  display: block; background: var(--surface-1); border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border); padding: 0 12px;
+}
+.appcard > b {
+  border-top: 1px solid var(--border); border-radius: 10px 10px 0 0;
+  padding-top: 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 -1px 0 var(--border);
+}
+.appcard .ad { font-size: 11px; color: var(--text-secondary); line-height: 1.5; padding-top: 5px; white-space: normal; }
+.appcard .al { display: flex; gap: 12px; padding-top: 9px; padding-bottom: 2px; }
+.appcard .al a { font-size: 11px; color: var(--brand); text-decoration: none; font-weight: 600; }
+.appcard .al a:hover { text-decoration: underline; }
+.appcard .an-note {
+  font-size: 10px; color: var(--muted); white-space: normal;
+  border-bottom: 1px solid var(--border); border-radius: 0 0 10px 10px;
+  padding-top: 7px; padding-bottom: 9px; box-shadow: var(--shadow);
+}
+@media (max-width: 900px) { .apps { display: none; } }
 
 /* ── conversion ─────────────────────────────────────────────────────────── */
 .convbanner { border-color: var(--warning); background: color-mix(in oklab, var(--warning) 9%, var(--surface-1)); }

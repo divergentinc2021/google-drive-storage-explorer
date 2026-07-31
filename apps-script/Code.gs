@@ -25,7 +25,46 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v16';
+var APP_VERSION = 'v18';
+
+/*
+ * The two desktop tools that finish the job this dashboard starts.
+ *
+ * They were mentioned only in a paragraph at the bottom of the Reclaimable
+ * panel, which is below the fold on every screen — so the app that actually
+ * performs the copy was, in the reporter's words, "practically unnoticeable".
+ * They belong in the header beside this app's own version.
+ *
+ * Versions are constants because both repos are PRIVATE: the GitHub releases
+ * API needs a token to read them, and putting one in an Apps Script that the
+ * whole domain can open would be worse than a number that occasionally lags.
+ * BUMP THESE ON RELEASE. The download links point at /releases/latest, which
+ * always resolves, so a stale number here never produces a broken download.
+ */
+var SIBLING_APPS = [
+  {
+    key: 'mapper',
+    name: 'Mapper',
+    full: 'Storage Mapper',
+    version: 'v0.8.1',
+    desc: 'Copies what this page identifies onto the NAS. Finds files already there ' +
+          'under a different name, proves every file is readable before it starts, ' +
+          'and never deletes anything.',
+    download: 'https://github.com/divergentinc2021/storage-mapper/releases/latest',
+    readme: 'https://github.com/divergentinc2021/storage-mapper#readme'
+  },
+  {
+    key: 'desktop',
+    name: 'Disk Explorer',
+    full: 'Disk Storage Explorer',
+    version: 'v0.6.0',
+    desc: 'This same treemap for local disks instead of Drive — your own machine, ' +
+          'an external drive, or a colleague\'s. Right-click to bin, with Windows ' +
+          'system and installed-program folders refused.',
+    download: 'https://github.com/divergentinc2021/google-drive-storage-explorer/releases/latest',
+    readme: 'https://github.com/divergentinc2021/google-drive-storage-explorer/tree/DesktopVersion#readme'
+  }
+];
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -173,6 +212,7 @@ function getBootstrap() {
     config: getConfig(),
     caps: { nasVerify: V_NAS_VERIFY, sharedDrives: V_SHARED_DRIVES },
     exportFormats: exportFormatMap_(about),
+    siblingApps: SIBLING_APPS,
     isOwner: isOwner_(),
     rootId: Drive.Files.get('root', { fields: 'id' }).id,
     version: APP_VERSION,
