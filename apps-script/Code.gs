@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v42';
+var APP_VERSION = 'v43';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -57,7 +57,7 @@ var SIBLING_APPS_RAW = [
     key: 'mapper',
     name: 'Mapper',
     full: 'Storage Mapper',
-    version: '0.9.2',
+    version: '0.9.3',
     repo: 'divergentinc2021/storage-mapper',
     tagTpl: 'v{v}',
     assetTpl: 'Storage.Mapper.Setup.{v}.exe',
