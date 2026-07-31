@@ -182,7 +182,21 @@ function latestRelease_(repo) {
       asset: exe.name,
       url: exe.browser_download_url
     };
-    cache.put(key, JSON.stringify(out), 21600);   // 6 hours
+    /*
+     * TWENTY MINUTES, not six hours.
+     *
+     * The release workflow PRUNES: publishing v0.9.0 deleted v0.8.1, and the
+     * cache went on serving the v0.8.1 asset URL — a 404 — for hours
+     * afterwards. Caching a versioned URL while old versions are being deleted
+     * guarantees a dead window after every release; the only question is how
+     * long it lasts.
+     *
+     * The cache is script-wide, so this is ~3 requests an hour per repo no
+     * matter how many people are looking, against an unauthenticated limit of
+     * 60 per IP. The 'All releases' link on every card covers the remaining
+     * window, because that URL cannot go stale.
+     */
+    cache.put(key, JSON.stringify(out), 1200);
     return out;
   } catch (e) {
     return null;   // offline, rate-limited, or renamed — fall back to the constants
@@ -520,6 +534,25 @@ function faviconCandidates_() {
       'https://drive.google.com/uc?export=view&id=' + id
     );
   }
+  return out;
+}
+
+/**
+ * Forget the cached release info and re-read it now.
+ *
+ * Run this straight after publishing a release: the prune deletes the previous
+ * one, so until the cache expires the chips hand out a URL that 404s. Twenty
+ * minutes is the worst case; this makes it none.
+ */
+function refreshReleaseCache() {
+  var cache = CacheService.getScriptCache();
+  var out = SIBLING_APPS_RAW.map(function (a) {
+    cache.remove('gh:' + a.repo);
+    var live = latestRelease_(a.repo);
+    return { repo: a.repo, version: live ? live.version : '(unreachable)',
+             asset: live ? live.asset : '', url: live ? live.url : '' };
+  });
+  Logger.log(JSON.stringify(out, null, 2));
   return out;
 }
 
