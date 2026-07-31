@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v25';
+var APP_VERSION = 'v26';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -146,11 +146,58 @@ function publishInstaller(key, fileId) {
            url: 'https://drive.google.com/file/d/' + file.getId() + '/view' };
 }
 
+/*
+ * The newest release, straight from GitHub.
+ *
+ * Both repos are public now, so this needs no token — which is what makes it
+ * possible at all. The version, the tag and the installer filename all come
+ * from the release itself, so a new release needs no edit here: the constants
+ * below are only the fallback for when GitHub cannot be reached.
+ *
+ * Cached for six hours because unauthenticated GitHub allows 60 requests an
+ * hour PER IP, and Apps Script egresses through addresses shared with every
+ * other script Google runs. Without the cache a busy hour would start failing
+ * for reasons nothing here controls.
+ */
+function latestRelease_(repo) {
+  var cache = CacheService.getScriptCache();
+  var key = 'gh:' + repo;
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (e) { /* refetch */ } }
+
+  try {
+    var resp = UrlFetchApp.fetch('https://api.github.com/repos/' + repo + '/releases/latest', {
+      muteHttpExceptions: true,
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'storage-explorer' }
+    });
+    if (resp.getResponseCode() !== 200) return null;
+    var rel = JSON.parse(resp.getContentText());
+    var exe = (rel.assets || []).filter(function (x) { return /\.exe$/i.test(x.name); })[0];
+    if (!exe) return null;
+    var out = {
+      version: String(rel.tag_name || '').replace(/^.*?v/, ''),
+      tag: rel.tag_name,
+      asset: exe.name,
+      url: exe.browser_download_url
+    };
+    cache.put(key, JSON.stringify(out), 21600);   // 6 hours
+    return out;
+  } catch (e) {
+    return null;   // offline, rate-limited, or renamed — fall back to the constants
+  }
+}
+
 function siblingApps_() {
   var pub = installers_();
   return SIBLING_APPS_RAW.map(function (a) {
-    var tag = a.tagTpl.replace('{v}', a.version);
-    var asset = a.assetTpl.replace('{v}', a.version);
+    var live = latestRelease_(a.repo);
+    if (live && live.version) a = {
+      key: a.key, name: a.name, full: a.full, desc: a.desc, repo: a.repo,
+      readme: a.readme, tagTpl: a.tagTpl, assetTpl: a.assetTpl,
+      version: live.version
+    };
+    var tag = live ? live.tag : a.tagTpl.replace('{v}', a.version);
+    var asset = live ? live.asset : a.assetTpl.replace('{v}', a.version);
     var mine = pub[a.key];
     /*
      * Only trust a published installer that matches the version being
@@ -163,8 +210,13 @@ function siblingApps_() {
       key: a.key, name: a.name, full: a.full, desc: a.desc,
       version: 'v' + a.version,
       asset: asset,
+      live: !!live,
+      // GitHub first: the repos are public, so this works for everyone with no
+      // account and nothing to maintain. The Drive copy stays as an override
+      // for a network that cannot reach github.com.
+      download: live ? live.url
+        : 'https://github.com/' + a.repo + '/releases/download/' + tag + '/' + asset,
       drive: fresh ? 'https://drive.google.com/file/d/' + fresh.id + '/view' : '',
-      github: 'https://github.com/' + a.repo + '/releases/download/' + tag + '/' + asset,
       releases: 'https://github.com/' + a.repo + '/releases',
       readme: a.readme
     };
