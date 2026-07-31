@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v35';
+var APP_VERSION = 'v39';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -765,6 +765,37 @@ function getBootstrap() {
  *
  * @param {Object} opts {pageToken, scope:'owned'|'all', driveId, includeTrashed}
  */
+/**
+ * Immediate subfolders of a folder, so the picker can be drilled into.
+ *
+ * Only one level: the picker expands on demand, and fetching a whole tree to
+ * show the top of it would make opening the dialog slower than the scan.
+ *
+ * `parentId` may be 'root' for My Drive, or a shared drive's id — a shared
+ * drive's id doubles as its root folder id, which is why one call covers both.
+ */
+function listFolders(parentId, driveId) {
+  var params = {
+    q: "'" + String(parentId).replace(/'/g, "\\'") + "' in parents and " +
+       "mimeType = '" + MIME_FOLDER + "' and trashed = false",
+    fields: 'files(id,name)',
+    pageSize: 200,
+    orderBy: 'name'
+  };
+  if (driveId) {
+    params.corpora = 'drive';
+    params.driveId = driveId;
+    params.includeItemsFromAllDrives = true;
+    params.supportsAllDrives = true;
+  }
+  try {
+    var res = Drive.Files.list(params);
+    return (res.files || []).map(function (f) { return { id: f.id, name: f.name }; });
+  } catch (e) {
+    return [];
+  }
+}
+
 function scanChunk(opts) {
   opts = opts || {};
   var started = Date.now();
