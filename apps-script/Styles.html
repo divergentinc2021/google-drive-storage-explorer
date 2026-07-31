@@ -380,6 +380,12 @@ select {
 .tabpane .panelhead { margin-bottom: 6px; }
 .tabpane .hint { margin: 0 0 8px; }
 
+/* ── conversion dialog ──────────────────────────────────────────────────── */
+.dlgrow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.warn-note { border-color: var(--serious); background: color-mix(in oklab, var(--serious) 8%, var(--surface-1)); }
+.bar { height: 8px; border-radius: 4px; background: var(--plane); overflow: hidden; margin-top: 10px; }
+.bar i { display: block; height: 100%; background: var(--brand); transition: width .25s; }
+
 /* ── what-to-scan picker ────────────────────────────────────────────────── */
 .picklist { display: grid; gap: 6px; margin: 12px 0 16px; max-height: 320px; overflow-y: auto; }
 .pickrow {

@@ -97,6 +97,7 @@ function dsInit() {
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && DS_SEL) dsClearSel();
   });
+  document.getElementById('btnConvert').addEventListener('click', dsOpenConvert);
   TM_AFTER_RENDER = dsResolveSel;
 
   // Right-click a tile. Bound once, here, so no build ends up with two menus.
@@ -686,6 +687,19 @@ function dsRenderClasses() {
   var types = Object.keys(byType).map(function (k) { return byType[k]; })
     .sort(function (a, b) { return b.n - a.n; });
 
+  // Only offer conversion when Google says something here is actually convertible.
+  var conv = document.getElementById('btnConvert');
+  if (conv) {
+    var can = types.filter(function (t) { return t.as; })
+                   .reduce(function (a, t) { return a + t.n; }, 0);
+    conv.disabled = !can;
+    conv.textContent = can ? '⤓ Convert ' + can.toLocaleString() + '…' : '⤓ Convert…';
+    conv.title = can
+      ? 'Export these into real files, beside the originals'
+      : types.length ? 'Google offers no export format for these types'
+                     : 'No Google-native files in this scan';
+  }
+
   var detail = types.length
     ? '<div class="row"><span class="nm"><small><b>What Google says it will convert</b> — ' +
       'reported by the Drive API for this account, not assumed here.</small></span></div>' +
@@ -1033,6 +1047,123 @@ function dsRenderSelBar(kind, key, count, bytes, folders, tileCount) {
       dsGoto(DS_BYID[this.getAttribute('data-goto')]);
     });
   }
+}
+
+/*
+ * ── converting natives ──────────────────────────────────────────────────────
+ *
+ * Preview first, always. This writes files into someone's Drive, and the first
+ * thing anyone should be able to do is read the list and decline.
+ */
+var DS_CONV_QUEUE = [], DS_CONV_DONE = 0, DS_CONV_FAILED = [], DS_CONV_SKIPPED = 0;
+
+function dsNativeIds() {
+  return DS_ALL.filter(function (n) {
+    return n.kind === KIND_NATIVE && n.id && !n.synthetic;
+  }).map(function (n) { return n.id; });
+}
+
+function dsOpenConvert() {
+  var ids = dsNativeIds();
+  if (!ids.length) return;
+  dsDialog('<h3>Convert Google files</h3><p class="hint">Asking Drive what it will convert…</p>');
+  google.script.run
+    .withSuccessHandler(dsShowConvertPlan)
+    .withFailureHandler(dsFail)
+    .previewConversion(ids);
+}
+
+function dsShowConvertPlan(p) {
+  var conv = p.convertible || [], imp = p.impossible || [];
+  var byExt = {};
+  conv.forEach(function (c) { byExt[c.as] = (byExt[c.as] || 0) + 1; });
+  var byKind = {};
+  imp.forEach(function (c) { byKind[c.kind] = (byKind[c.kind] || 0) + 1; });
+
+  dsDialog(
+    '<h3>Convert Google files</h3>' +
+    '<p class="hint">Google exports each file and the result is written <b>beside the original</b>, ' +
+    'so it lands at the same path your NAS mirror expects. Nothing is modified, moved or deleted, ' +
+    'and files already converted are skipped.</p>' +
+    (conv.length
+      ? '<div class="note"><b>' + conv.length.toLocaleString() + ' file(s) will be converted</b><div style="margin-top:5px">' +
+        Object.keys(byExt).map(function (e) {
+          return '<div>· ' + byExt[e].toLocaleString() + ' → <b>.' + dsEsc(e) + '</b></div>';
+        }).join('') + '</div></div>'
+      : '<div class="note">Nothing here can be converted.</div>') +
+    (imp.length
+      ? '<div class="note warn-note"><b>' + imp.length.toLocaleString() + ' cannot be converted</b> — ' +
+        'Google offers no export format for them, so no tool can produce a file.<div style="margin-top:5px">' +
+        Object.keys(byKind).map(function (k) {
+          return '<div>· ' + byKind[k].toLocaleString() + ' × ' + dsEsc(k) + '</div>';
+        }).join('') + '</div></div>'
+      : '') +
+    '<div class="note"><small>Converted copies are real files and <b>use Drive quota</b> until you ' +
+    'delete them after they reach the NAS. Anything over roughly 10 MB will be refused by Google\'s ' +
+    'export limit and reported here.</small></div>' +
+    '<div class="dlgrow">' +
+    '<button class="btn ghost" id="convCancel">Cancel</button>' +
+    (conv.length ? '<button class="btn" id="convGo">Convert ' + conv.length.toLocaleString() + '</button>' : '') +
+    '</div>');
+
+  document.getElementById('convCancel').addEventListener('click', dsCloseDialog);
+  if (conv.length) {
+    document.getElementById('convGo').addEventListener('click', function () {
+      DS_CONV_QUEUE = conv.map(function (c) { return c.id; });
+      DS_CONV_DONE = 0; DS_CONV_FAILED = []; DS_CONV_SKIPPED = 0;
+      dsRunConvert();
+    });
+  }
+}
+
+/*
+ * Driven in chunks because one Apps Script call cannot outlive six minutes. The
+ * server returns whatever it did not reach as `remaining` and we call again —
+ * the same continuation the scan uses.
+ */
+function dsRunConvert() {
+  var total = DS_CONV_DONE + DS_CONV_QUEUE.length + DS_CONV_FAILED.length + DS_CONV_SKIPPED;
+  dsDialog('<h3>Converting…</h3>' +
+    '<p class="hint">' + DS_CONV_DONE.toLocaleString() + ' of ' + total.toLocaleString() +
+    ' done. Leave this tab open.</p>' +
+    '<div class="bar"><i style="width:' +
+    (total ? Math.round(100 * DS_CONV_DONE / total) : 0) + '%"></i></div>');
+
+  google.script.run
+    .withSuccessHandler(function (r) {
+      DS_CONV_DONE += (r.done || []).length;
+      DS_CONV_SKIPPED += (r.skipped || []).length;
+      DS_CONV_FAILED = DS_CONV_FAILED.concat(r.failed || []);
+      DS_CONV_QUEUE = r.remaining || [];
+      if (DS_CONV_QUEUE.length) dsRunConvert();
+      else dsConvertDone();
+    })
+    .withFailureHandler(dsFail)
+    .convertNatives(DS_CONV_QUEUE);
+}
+
+function dsConvertDone() {
+  dsDialog('<h3>Conversion finished</h3>' +
+    '<div class="note"><b>' + DS_CONV_DONE.toLocaleString() + '</b> file(s) converted' +
+    (DS_CONV_SKIPPED ? ' · <b>' + DS_CONV_SKIPPED.toLocaleString() + '</b> already done' : '') +
+    (DS_CONV_FAILED.length ? ' · <b>' + DS_CONV_FAILED.length.toLocaleString() + '</b> could not be' : '') +
+    '</div>' +
+    (DS_CONV_FAILED.length
+      ? '<div class="note warn-note">' + DS_CONV_FAILED.slice(0, 25).map(function (f) {
+          return '<div>· ' + dsEsc(f.name) + ' — ' + dsEsc(f.why) + '</div>';
+        }).join('') +
+        (DS_CONV_FAILED.length > 25
+          ? '<div>· …and ' + (DS_CONV_FAILED.length - 25).toLocaleString() + ' more</div>' : '') +
+        '</div>'
+      : '') +
+    '<div class="note"><small>Drive for Desktop will sync the new files down. Once they appear ' +
+    'locally, <b>Storage Mapper</b> copies them to the NAS like any other file — they now have ' +
+    'contents, so they pass its readability check.</small></div>' +
+    '<div class="dlgrow"><button class="btn" id="convClose">Close</button></div>');
+  document.getElementById('convClose').addEventListener('click', function () {
+    dsCloseDialog();
+    dsScan();   // re-scan: the new files are real and belong in the map
+  });
 }
 
 // ── storage by file type ────────────────────────────────────────────────────
