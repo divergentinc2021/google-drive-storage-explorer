@@ -487,15 +487,40 @@ function publishFaviconDomainOnly() {
  * why. Each candidate is tried against a throwaway HtmlOutput here, and the one
  * that survives is the one worth serving.
  */
+/*
+ * IT VALIDATES THE FILE EXTENSION, not the image.
+ *
+ * Every Drive-hosted form was refused with "The favicon icon image type is not
+ * supported" — including one already proven to return image/png, 2140 bytes,
+ * with CORS open. setFaviconUrl is not fetching anything; it is reading the end
+ * of the URL, and a Drive link never ends in .png.
+ *
+ * So the icon comes from the repository, which is public as of today and serves
+ * raw files over https with a real extension. That also makes the whole Drive
+ * publishing path unnecessary for the favicon: no file to share, nothing to
+ * re-run after a change, and the icon in the tab is the same file the app icon
+ * is built from.
+ *
+ * The Drive forms stay LAST as a fallback for a repository that goes private
+ * again — they are refused today, which costs one loop iteration and no
+ * behaviour, and they would still be refused, so this is honestly closer to
+ * documentation than to a fallback.
+ */
+var FAVICON_RAW =
+  'https://raw.githubusercontent.com/divergentinc2021/google-drive-storage-explorer/main/assets/icon-192.png';
+
 function faviconCandidates_() {
+  var out = [FAVICON_RAW];
   var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
-  if (!id) return [];
-  return [
-    'https://lh3.googleusercontent.com/d/' + id + '=w64-h64',
-    'https://lh3.googleusercontent.com/d/' + id,
-    'https://drive.google.com/thumbnail?id=' + id + '&sz=w64',
-    'https://drive.google.com/uc?export=view&id=' + id
-  ];
+  if (id) {
+    out.push(
+      'https://lh3.googleusercontent.com/d/' + id + '=w64-h64',
+      'https://lh3.googleusercontent.com/d/' + id,
+      'https://drive.google.com/thumbnail?id=' + id + '&sz=w64',
+      'https://drive.google.com/uc?export=view&id=' + id
+    );
+  }
+  return out;
 }
 
 function faviconProbe() {
@@ -564,9 +589,9 @@ function faviconStatus() {
 }
 
 /** Google's image CDN for that Drive file. Empty until publishFavicon has run. */
+/** The icon actually served. See faviconCandidates_ for why it is a repo URL. */
 function faviconUrl_() {
-  var id = PropertiesService.getScriptProperties().getProperty(PROP_FAVICON);
-  return id ? 'https://lh3.googleusercontent.com/d/' + id + '=w64-h64' : '';
+  return FAVICON_RAW;
 }
 
 function doGet() {
