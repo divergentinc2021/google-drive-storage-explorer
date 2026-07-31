@@ -330,6 +330,7 @@ function dsScanDone() {
   dsLog('All pages in. Building the tree and laying out ' +
         DS_ALL.length.toLocaleString() + ' items…');
 
+  dsCheckConverted();   // async; the banner repaints when it answers
   dsBuildTree();
   DS_STACK = [DS_TREE];
   tmSetRoot(DS_TREE);
@@ -639,14 +640,57 @@ function dsRenderTiles() {
       { k: 'Dead & reclaimable', v: tmFmtBytes(s.deadBytes),
         n: s.deadFiles.toLocaleString() + ' binaries idle > ' + dsDaysLabel(DS_DEAD_DAYS) },
       { k: 'Google-native files', v: s.nativeCount.toLocaleString(),
-        n: 'export job — frees ~0 space' },
+        n: 'export job — frees ~0 space', key: 'native' },
       { k: 'Indexed', v: s.fileTotal.toLocaleString() + ' files',
         n: 'in ' + s.folderTotal.toLocaleString() + ' folders · this scan only' });
   }
   document.getElementById('tiles').innerHTML = tiles.map(function (t) {
-    return '<div class="tile"><div class="k">' + dsEsc(t.k) + '</div><div class="v">' +
-           dsEsc(t.v) + '</div><div class="n">' + dsEsc(t.n) + '</div></div>';
+    return '<div class="tile' + (t.key === 'native' ? ' act' : '') + '">' +
+           '<div class="k">' + dsEsc(t.k) + '</div><div class="v">' +
+           dsEsc(t.v) + '</div><div class="n">' + dsEsc(t.n) + '</div>' +
+           (t.key === 'native' ? '<div class="ta" id="nativeAction"></div>' : '') +
+           '</div>';
   }).join('');
+  dsRenderNativeTile();
+}
+
+/*
+ * The convert action lives in the Google-native tile rather than in a banner of
+ * its own.
+ *
+ * It was a full-width yellow slab between the tiles and the map — visible, but
+ * reading as an interruption rather than as part of the dashboard. The count it
+ * acts on is already a tile, sitting beside In Drive and In trash, so the
+ * action belongs on that tile. One number, one place.
+ */
+function dsRenderNativeTile() {
+  var el = document.getElementById('nativeAction');
+  if (!el) return;
+
+  var can = 0, cannot = 0;
+  DS_ALL.forEach(function (n) {
+    if (n.kind !== KIND_NATIVE || !n.mime) return;
+    if (dsExportAs(n.mime)) can++; else cannot++;
+  });
+
+  var st = DS_CONV_STATUS;
+  var todo = st && st.checked ? st.pending : can;
+  var done = st && st.checked ? st.converted : 0;
+
+  if (!can && !cannot) { el.innerHTML = ''; return; }
+
+  if (todo) {
+    el.innerHTML =
+      (done ? '<span class="tdone">' + done.toLocaleString() + ' converted</span>' : '') +
+      '<button class="btn sm" id="convBannerGo">⤓ Convert ' + todo.toLocaleString() + '…</button>';
+    document.getElementById('convBannerGo').addEventListener('click', dsOpenConvert);
+    return;
+  }
+
+  el.innerHTML = done
+    ? '<span class="tdone ok">✓ ' + done.toLocaleString() + ' converted</span>' +
+      (cannot ? '<span class="tdone">' + cannot.toLocaleString() + ' cannot be</span>' : '')
+    : '<span class="tdone">' + cannot.toLocaleString() + ' have no export path</span>';
 }
 
 function dsDaysLabel(d) {
@@ -815,30 +859,27 @@ function dsRenderClasses() {
  * it will be read. The desktop app now refuses to copy them at all, which is
  * correct but leaves the user with a list and no next step — this is the step.
  */
-function dsRenderConvBanner(can, cannot) {
-  var el = document.getElementById('convBanner');
-  if (!el) return;
-  if (!can && !cannot) { el.hidden = true; el.innerHTML = ''; return; }
+var DS_CONV_STATUS = null;   // {converted, pending} from the server, or null
 
-  el.hidden = false;
-  el.innerHTML =
-    '<b>' + (can + cannot).toLocaleString() + ' Google file(s) have no contents on disk.</b> ' +
-    'Storage Mapper cannot copy them — a Doc, Sheet or Vid is a few hundred bytes of ' +
-    'pointer, and the file itself only exists inside Google.' +
-    (can
-      ? '<div style="margin-top:6px"><b>' + can.toLocaleString() + '</b> can be exported into real ' +
-        'files, written into <b>My Drive → _Converted for NAS</b> so they sync down and can be copied.</div>'
-      : '') +
-    (cannot
-      ? '<div style="margin-top:6px">' + cannot.toLocaleString() + ' cannot — Google offers no ' +
-        'export format, so no tool can produce a file. See <i>Migration classes</i>.</div>'
-      : '') +
-    (can
-      ? '<div style="margin-top:9px"><button class="btn" id="convBannerGo">⤓ Convert ' +
-        can.toLocaleString() + ' now…</button></div>'
-      : '');
+/* The convert affordance now lives on the Google-native tile. */
+function dsRenderConvBanner() { dsRenderNativeTile(); }
 
-  if (can) document.getElementById('convBannerGo').addEventListener('click', dsOpenConvert);
+/*
+ * Ask the server what is already done, then re-render. Deliberately AFTER the
+ * first paint: it walks the destination tree, so it is slower than everything
+ * else on the page and must not hold the map up.
+ */
+function dsCheckConverted() {
+  var ids = dsNativeIds();
+  if (!ids.length) { DS_CONV_STATUS = null; return; }
+  google.script.run
+    .withSuccessHandler(function (st) {
+      DS_CONV_STATUS = st;
+      dsRenderTiles();     // the count and the action both live on the tile
+      dsRenderClasses();
+    })
+    .withFailureHandler(function () { /* leave the banner on scan counts */ })
+    .conversionStatus(ids);
 }
 
 /*
@@ -1361,7 +1402,11 @@ function dsConvertDone() {
     '<div class="dlgrow"><button class="btn" id="convClose">Close</button></div>');
   document.getElementById('convClose').addEventListener('click', function () {
     dsCloseDialog();
-    dsScan();   // re-scan: the new files are real and belong in the map
+    // Re-check rather than re-scan: the converted files are real and belong in
+    // the map, but a full re-scan of a large Drive to update one banner is a
+    // heavy answer to a light question. dsScan is still there on the button.
+    DS_CONV_STATUS = null;
+    dsCheckConverted();
   });
 }
 

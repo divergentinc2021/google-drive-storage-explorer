@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v20';
+var APP_VERSION = 'v21';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -577,6 +577,48 @@ function chooseExport_(mime, exportFormats) {
  * Eight Sites and Apps Script projects failed exactly there. Deriving the
  * upload type from the EXTENSION keeps it to types Drive will accept.
  */
+/*
+ * Take ownership by copying, export the copy, then bin the copy.
+ *
+ * The temporary copy is ALWAYS trashed, including when the export of it fails,
+ * because a half-finished workaround that litters someone's Drive with
+ * "(temporary export copy)" files is worse than the failure it was working
+ * around. Trashed rather than permanently deleted — this tool never destroys.
+ */
+function exportViaCopy_(f, cand, token, parent, candName) {
+  var copyId = null;
+  try {
+    var copy = Drive.Files.copy(
+      { name: f.name + ' (temporary export copy)', parents: [parent] },
+      f.id, { supportsAllDrives: true }
+    );
+    copyId = copy.id;
+
+    var resp = UrlFetchApp.fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(copyId) +
+      '/export?mimeType=' + encodeURIComponent(cand.mime),
+      { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+    );
+    if (resp.getResponseCode() !== 200) {
+      var b = '';
+      try { b = resp.getContentText().slice(0, 300); } catch (e2) { b = ''; }
+      return { id: null, why: 'copied it to get ownership, but Drive still refused the export — ' +
+                             explainDriveError_(resp.getResponseCode(), b) };
+    }
+    var blob = resp.getBlob().setName(candName).setContentType(uploadMimeFor_(cand.ext));
+    var made = Drive.Files.create({ name: candName, parents: [parent] }, blob,
+                                  { supportsAllDrives: true });
+    return { id: made.id, why: '' };
+  } catch (e) {
+    return { id: null, why: 'could not copy it to take ownership: ' + e.message };
+  } finally {
+    if (copyId) {
+      try { Drive.Files.update({ trashed: true }, copyId, null, { supportsAllDrives: true }); }
+      catch (e3) { /* the export already succeeded or failed; a stray copy is not fatal */ }
+    }
+  }
+}
+
 /**
  * Who to go and ask. A refusal on a file you do not own has a person attached
  * to it, and naming them turns a dead end into a next step.
@@ -650,6 +692,72 @@ function uploadMimeFor_(ext) {
  * Separate from the run on purpose: this writes files into someone's Drive, and
  * the first thing anyone should be able to do is see the list.
  */
+/*
+ * How many are ALREADY converted.
+ *
+ * Without this the banner counts Google-native files in the scan, which never
+ * goes down: converting produces a new file beside the original and leaves the
+ * original exactly where it was. So after converting 160 of 161 the dashboard
+ * still announced 161 to convert, and the button still offered to do all of
+ * them — the work was invisible, and the only way to discover it had happened
+ * was to start another run and read "already done".
+ *
+ * The destination tree is walked once and reduced to a set of names, rather
+ * than asking Drive about each file in turn: one query per folder beats one per
+ * file, and the tree is shallow because it mirrors folders that hold natives.
+ */
+function conversionStatus(ids) {
+  var out = { converted: 0, pending: 0, checked: false, names: 0 };
+  var myRoot;
+  try { myRoot = Drive.Files.get('root', { fields: 'id' }).id; }
+  catch (e) { return out; }
+
+  var q = "name = '" + CONVERT_ROOT_NAME + "' and '" + myRoot + "' in parents and " +
+          "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  var root;
+  try {
+    var hit = Drive.Files.list({ q: q, fields: 'files(id)', pageSize: 1, supportsAllDrives: true });
+    root = hit.files && hit.files.length ? hit.files[0].id : null;
+  } catch (e) { return out; }
+  if (!root) { out.checked = true; out.pending = (ids || []).length; return out; }
+
+  // Breadth-first over the mirrored tree, collecting file names.
+  var have = {}, queue = [root], guard = 0;
+  while (queue.length && guard++ < 400) {
+    var folder = queue.shift(), tok = null;
+    do {
+      var page;
+      try {
+        page = Drive.Files.list({
+          q: "'" + folder + "' in parents and trashed = false",
+          fields: 'nextPageToken,files(id,name,mimeType)', pageSize: 1000,
+          pageToken: tok || undefined, supportsAllDrives: true
+        });
+      } catch (e) { break; }
+      (page.files || []).forEach(function (x) {
+        if (x.mimeType === MIME_FOLDER) queue.push(x.id);
+        else have[x.name] = 1;
+      });
+      tok = page.nextPageToken || null;
+    } while (tok);
+  }
+  out.names = Object.keys(have).length;
+  out.checked = true;
+
+  var about = Drive.About.get({ fields: 'exportFormats' });
+  var fmts = about.exportFormats || {};
+  (ids || []).forEach(function (id) {
+    var n = null;
+    try { n = Drive.Files.get(id, { fields: 'name,mimeType', supportsAllDrives: true }); }
+    catch (e) { return; }
+    var cands = exportCandidates_(n.mimeType, fmts);
+    if (!cands.length) return;                       // not convertible; not pending either
+    var done = cands.some(function (c) { return have[n.name + '.' + c.ext]; });
+    if (done) out.converted++; else out.pending++;
+  });
+  return out;
+}
+
 function previewConversion(ids) {
   var about = Drive.About.get({ fields: 'exportFormats' });
   var fmts = about.exportFormats || {};
@@ -854,6 +962,33 @@ function convertNatives(ids) {
          * and "you are going too fast" — three different problems with three
          * different answers, and the reason code distinguishes them.
          */
+        /*
+         * A PERMISSION refusal is not the end of it.
+         *
+         * "The user does not have sufficient permissions for this file" means
+         * you may read someone else's file but not export it. Copying it makes
+         * YOU the owner of the copy, and you can always export your own file —
+         * so copy, export the copy, then bin the copy.
+         *
+         * Note this is the opposite conclusion to the stub question, and both
+         * are right: copying does not help when the problem is that a native
+         * has no bytes, because the copy is another native. It helps here
+         * because the problem is ownership, and a copy changes exactly that.
+         *
+         * Only when Drive says copying is allowed. An owner who disabled
+         * copy/download has made a decision this tool should not route around.
+         */
+        var permissionProblem = /insufficientFilePermissions|does not have sufficient permissions/i.test(body);
+        if (permissionProblem && f.capabilities && f.capabilities.canCopy !== false) {
+          var viaCopy = exportViaCopy_(f, cand, token, parent, candName);
+          if (viaCopy.id) {
+            savedId = viaCopy.id; savedName = candName; savedExt = cand.ext;
+            viaCopy.copied = true;
+            break;
+          }
+          lastWhy = viaCopy.why + whoOwns_(f);
+          continue;
+        }
         lastWhy = 'Drive refused the export — ' + explainDriveError_(code, body) + whoOwns_(f);
         continue;
       }
