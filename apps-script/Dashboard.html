@@ -1904,8 +1904,41 @@ function dsTrashSelected() {
     .trashFiles(ids);
 }
 
+/*
+ * The manifest gets the same dialog the scan uses, for the same reason.
+ *
+ * Building it is a server round trip over the whole scan, and the button gave
+ * no sign it had been pressed — so it was pressed again, and again. Every
+ * queued call came back with its own file: fifty downloads from one intention.
+ *
+ * The re-entrancy guard is the fix for the fifty files. The bar and the log are
+ * the fix for the cause: a control that shows nothing invites a second press,
+ * and no guard makes that feel any better.
+ */
+var DS_CSV_BUSY = false;
+
 function dsExportCsv() {
+  if (DS_CSV_BUSY || DS_SCANNING) return;
   if (!DS_ALL.length) { dsDialog('<p>Run a scan first.</p>'); return; }
+
+  var btn = document.getElementById('btnCsv');
+  var finish = function (label) {
+    DS_CSV_BUSY = false;
+    dsCreepStop();
+    btn.disabled = false;
+    btn.textContent = label || '⤓ Manifest CSV';
+    if (label) setTimeout(function () { btn.textContent = '⤓ Manifest CSV'; }, 2500);
+  };
+
+  DS_CSV_BUSY = true;
+  btn.disabled = true;
+  btn.textContent = 'Building…';
+
+  dsScanDlgOpen('Building the manifest…');
+  dsLogStart();
+  dsLog('Classifying ' + DS_ALL.length.toLocaleString() + ' indexed items…');
+  dsProgress(8, 'Classifying…');
+
   var rows = [];
   DS_ALL.forEach(function (n) {
     if (n.kind === KIND_FOLDER || n.synthetic) return;
@@ -1922,17 +1955,46 @@ function dsExportCsv() {
                 md5: n.md5 || '' });
   });
 
+  var withMd5 = rows.filter(function (r) { return r.md5; }).length;
+  dsLog(rows.length.toLocaleString() + ' file rows · ' + withMd5.toLocaleString() +
+        ' carry a checksum', 'ok');
+  if (!withMd5) {
+    dsLog('No checksums in this scan — Storage Mapper will match on size + name only', 'bad');
+  }
+  dsLog('Asking the server to build the CSV…');
+  dsProgress(22, 'Building the CSV…');
+  dsCreepStart(22, 88, 'progBar', function (secs) {
+    dsLog('still building — ' + secs + 's so far', 'dim');
+  });
+
+  var t0 = Date.now();
   google.script.run.withSuccessHandler(function (csv) {
+    dsCreepStop();
+    dsProgress(96, 'Saving…');
+    dsLog('CSV ready in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's — ' +
+          Math.round(csv.length / 1024).toLocaleString() + ' KB', 'ok');
     try {
       var blob = new Blob([csv], { type: 'text/csv' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'studiodrive-manifest.csv';
       document.body.appendChild(a); a.click(); a.remove();
+      dsProgress(100, 'Done');
+      // A browser download can be entirely silent depending on settings, which
+      // is half the reason the button looked dead. Say it landed, and where.
+      dsLog('Saved as studiodrive-manifest.csv — load it in Storage Mapper ' +
+            'under Drive manifest', 'ok');
+      finish('✓ Downloaded');
+      setTimeout(dsScanDlgClose, 900);
     } catch (e) {
+      finish();
+      dsScanDlgClose();
       dsDialog('<h3>Manifest (copy it out)</h3><pre>' + dsEsc(csv.slice(0, 200000)) + '</pre>');
     }
-  }).withFailureHandler(dsFail).buildManifestCsv(rows);
+  }).withFailureHandler(function (err) {
+    finish();
+    dsFail(err);   // holds the dialog open with the error in the log
+  }).buildManifestCsv(rows);
 }
 
 function dsShowRclone() {
