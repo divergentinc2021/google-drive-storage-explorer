@@ -1,23 +1,23 @@
-/**
- * Google Drive Storage Explorer — Drive storage treemap + NAS migration triage
+﻿/**
+ * Google Drive Storage Explorer â€” Drive storage treemap + NAS migration triage
  * Account: studiouih@uwc.ac.za
  *
  * Backend responsibilities:
  *   - paginated Drive inventory (client-driven, so the 6-min limit never bites)
- *   - storage-quota truth (quotaBytesUsed, not `size` — natives are 0-quota)
+ *   - storage-quota truth (quotaBytesUsed, not `size` â€” natives are 0-quota)
  *   - activity classification (dead / stale / cold / warm / hot)
  *   - migration class (NATIVE export vs BINARY move-and-delete)
  *   - config store for the QNAP agent to poll
  *   - gated trash (reversible only; verification-aware)
  *
  * The UI is served entirely from this project (Index/Styles/Treemap/Dashboard
- * .html) — no CDN, no external script.
+ * .html) â€” no CDN, no external script.
  */
 
-// ─── release stamp ───────────────────────────────────────────────────────────
+// â”€â”€â”€ release stamp â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Shown in the banner so you can tell at a glance which build you are looking at
- * — the /dev URL and the versioned /exec URL routinely differ by a commit or two.
+ * â€” the /dev URL and the versioned /exec URL routinely differ by a commit or two.
  *
  * BUMP BOTH BEFORE `clasp deploy`. This is the one thing in the project capable
  * of silently lying: `clasp deploy` mints a version number on Google's side and
@@ -25,13 +25,13 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v39';
+var APP_VERSION = 'v40';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
  *
  * They were mentioned only in a paragraph at the bottom of the Reclaimable
- * panel, which is below the fold on every screen — so the app that actually
+ * panel, which is below the fold on every screen â€” so the app that actually
  * performs the copy was, in the reporter's words, "practically unnoticeable".
  * They belong in the header beside this app's own version.
  *
@@ -43,7 +43,7 @@ var APP_VERSION = 'v39';
  */
 /*
  * ONE version string per app. The tag and the installer filename both carry the
- * version, so a direct download URL names it twice — and a link that repeats a
+ * version, so a direct download URL names it twice â€” and a link that repeats a
  * constant three times rots the first time somebody updates two of them.
  * siblingApps_() builds the URLs, so a release is one edit here.
  *
@@ -75,7 +75,7 @@ var SIBLING_APPS_RAW = [
     tagTpl: 'desktop-v{v}',
     assetTpl: 'DiskStorageExplorer-Setup-{v}.exe',
     readme: 'https://github.com/divergentinc2021/google-drive-storage-explorer/tree/DesktopVersion#readme',
-    desc: 'This same treemap for local disks instead of Drive — your own machine, ' +
+    desc: 'This same treemap for local disks instead of Drive â€” your own machine, ' +
           'an external drive, or a colleague\'s. Right-click to bin, with Windows ' +
           'system and installed-program folders refused.'
   }
@@ -85,7 +85,7 @@ var SIBLING_APPS_RAW = [
  * GITHUB CANNOT BE THE DOWNLOAD CHANNEL, and the 404 proved it.
  *
  * Both repos are private, and GitHub answers a private release asset with 404
- * rather than 403 — it will not even admit the file exists. The URL was right;
+ * rather than 403 â€” it will not even admit the file exists. The URL was right;
  * it matched GitHub's own browser_download_url exactly. The audience is wrong:
  * the people clicking these chips are uwc.ac.za Google users, most of whom have
  * no GitHub account on this org at all. No amount of link-building fixes that.
@@ -108,7 +108,7 @@ function installers_() {
  * Point a chip at an installer you have uploaded to Drive.
  *
  * Upload the .exe anywhere in your Drive, then run publishInstaller('mapper')
- * — it finds the file by the exact name the version implies, shares it with the
+ * â€” it finds the file by the exact name the version implies, shares it with the
  * domain, and records it. Pass a file id as the second argument to skip the
  * search.
  *
@@ -134,7 +134,7 @@ function publishInstaller(key, fileId) {
     }
     file = it.next();
     if (it.hasNext()) {
-      throw new Error('More than one file named "' + wanted + '" — pass the file id you mean.');
+      throw new Error('More than one file named "' + wanted + '" â€” pass the file id you mean.');
     }
   }
 
@@ -151,7 +151,7 @@ function publishInstaller(key, fileId) {
 /*
  * The newest release, straight from GitHub.
  *
- * Both repos are public now, so this needs no token — which is what makes it
+ * Both repos are public now, so this needs no token â€” which is what makes it
  * possible at all. The version, the tag and the installer filename all come
  * from the release itself, so a new release needs no edit here: the constants
  * below are only the fallback for when GitHub cannot be reached.
@@ -186,7 +186,7 @@ function latestRelease_(repo) {
      * TWENTY MINUTES, not six hours.
      *
      * The release workflow PRUNES: publishing v0.9.0 deleted v0.8.1, and the
-     * cache went on serving the v0.8.1 asset URL — a 404 — for hours
+     * cache went on serving the v0.8.1 asset URL â€” a 404 â€” for hours
      * afterwards. Caching a versioned URL while old versions are being deleted
      * guarantees a dead window after every release; the only question is how
      * long it lasts.
@@ -199,7 +199,7 @@ function latestRelease_(repo) {
     cache.put(key, JSON.stringify(out), 1200);
     return out;
   } catch (e) {
-    return null;   // offline, rate-limited, or renamed — fall back to the constants
+    return null;   // offline, rate-limited, or renamed â€” fall back to the constants
   }
 }
 
@@ -240,15 +240,15 @@ function siblingApps_() {
 }
 var APP_UPDATED = '2026-07-31';
 
-// ─── capability flags ────────────────────────────────────────────────────────
+// â”€â”€â”€ capability flags â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // A UI that ships separately from its backend must describe the BACKEND.
 // Flip V_NAS_VERIFY only once the QNAP agent is actually reporting manifests.
-var V_NAS_VERIFY = false; // agent not deployed yet → trash stays manually gated
+var V_NAS_VERIFY = false; // agent not deployed yet â†’ trash stays manually gated
 var V_SHARED_DRIVES = true;
 
 /**
  * The web app runs `executeAs: USER_ACCESSING`, so the Drive scan and the trash
- * always act on whoever opened it — a user can only ever see and bin their own
+ * always act on whoever opened it â€” a user can only ever see and bin their own
  * files. That isolation is free.
  *
  * Script Properties are NOT isolated: one shared store for every user of the
@@ -261,7 +261,7 @@ var OWNERS = ['studiouih@uwc.ac.za'];
  * Who is running this, via DRIVE rather than Session.
  *
  * Session.getActiveUser() needs the userinfo.email scope, which this project
- * does not request — so it did not return an empty string, it threw:
+ * does not request â€” so it did not return an empty string, it threw:
  *   "Specified permissions are not sufficient to call Session.getActiveUser"
  * and every identity check refused everybody, including the owner.
  *
@@ -296,9 +296,9 @@ function whoAmI() {
     drive = (a && a.user && a.user.emailAddress) || '(empty)';
   } catch (e) { drive = '(failed: ' + e.message + ')'; }
   try { active = Session.getActiveUser().getEmail() || '(empty)'; }
-  catch (e) { active = '(blocked — needs the userinfo.email scope, which this project does not request)'; }
+  catch (e) { active = '(blocked â€” needs the userinfo.email scope, which this project does not request)'; }
   try { effective = Session.getEffectiveUser().getEmail() || '(empty)'; }
-  catch (e) { effective = '(blocked — same reason)'; }
+  catch (e) { effective = '(blocked â€” same reason)'; }
 
   var out = {
     driveUser: drive,        // the one that decides; the others are informational
@@ -316,8 +316,8 @@ function whoAmI() {
  * to a web request.
  *
  * Session.getActiveUser().getEmail() returns an empty string in several
- * ordinary cases — a consumer account, certain authorisation modes, or a
- * account outside the script owner's domain — and publishFavicon refused with
+ * ordinary cases â€” a consumer account, certain authorisation modes, or a
+ * account outside the script owner's domain â€” and publishFavicon refused with
  * "Only studiouih@uwc.ac.za may publish the icon" while being run by exactly
  * that person. getEffectiveUser() is who the script RUNS AS, which for an
  * editor Run is whoever clicked it, so either identity matching is enough.
@@ -342,12 +342,12 @@ function ownerRefusal_(what) {
   return new Error(
     'Only ' + OWNERS.join(', ') + ' may ' + what + '.\n' +
     'Drive says this is running as: ' + w.driveUser + '\n' +
-    'If that is not an owner, sign in to the editor as one — or add that address ' +
+    'If that is not an owner, sign in to the editor as one â€” or add that address ' +
     'to OWNERS in Code.gs.'
   );
 }
 
-// ─── tunables ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ tunables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var SCAN_BUDGET_MS = 240000; // stop a chunk at 4 min, hand a token back to client
 var PAGE_SIZE = 1000;
 var PROP_CONFIG = 'SS_CONFIG';
@@ -359,7 +359,7 @@ var NATIVE_PREFIX = 'application/vnd.google-apps.';
 var MIME_FOLDER = NATIVE_PREFIX + 'folder';
 var MIME_SHORTCUT = NATIVE_PREFIX + 'shortcut';
 
-/** Google-native → what rclone will export it as when copying to the NAS. */
+/** Google-native â†’ what rclone will export it as when copying to the NAS. */
 var EXPORT_MAP = {
   'document': 'docx',
   'spreadsheet': 'xlsx',
@@ -367,15 +367,15 @@ var EXPORT_MAP = {
   'drawing': 'svg',
   'script': 'json',
   'jam': 'pdf',
-  'form': null, // not exportable by rclone — must stay in Drive
+  'form': null, // not exportable by rclone â€” must stay in Drive
   'site': null,
   'map': null
 };
 
-// ─── web app entry ───────────────────────────────────────────────────────────
+// â”€â”€â”€ web app entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Tab icon. Apps Script IGNORES a <link rel="icon"> inside the served HTML for
- * web apps — setFaviconUrl() is the only mechanism, and it normally expects an
+ * web apps â€” setFaviconUrl() is the only mechanism, and it normally expects an
  * http(s) URL. A data: URI works in current browsers but is not documented as
  * supported, so the call is wrapped: an icon must never be able to take the
  * whole app down. If the tab shows Google's default instead of the red mark,
@@ -389,14 +389,14 @@ var EXPORT_MAP = {
  * in the served markup is ignored, and setFaviconUrl() is the only lever.
  *
  * setFaviconUrl wants an http(s) URL. The previous version passed a data: URI,
- * which is undocumented and, in practice, ignored — the tab kept Google's
+ * which is undocumented and, in practice, ignored â€” the tab kept Google's
  * generic Apps Script icon, which is what was reported. The repo is private, so
  * a raw.githubusercontent URL would 404 for the browser fetching the icon.
  *
  * So the script publishes the icon into Drive and serves it from Google's own
  * image CDN. publishFavicon() is a deliberate, owner-only action because it
  * makes one file link-readable. Nothing here shares anything on its own, and
- * the app works without it — the tab simply keeps Google's icon.
+ * the app works without it â€” the tab simply keeps Google's icon.
  */
 var PROP_FAVICON = 'SS_FAVICON_FILE_ID';
 var FAVICON_NAME = 'storage-explorer-favicon.png';
@@ -436,7 +436,7 @@ function publishFavicon(access) {
 
   /*
    * Logger.log, not just a return value. The editor's execution log shows only
-   * what was LOGGED — a function that merely returns an object completes with
+   * what was LOGGED â€” a function that merely returns an object completes with
    * "Execution started / Execution completed" and nothing between, which is
    * indistinguishable from having done nothing at all.
    */
@@ -446,7 +446,7 @@ function publishFavicon(access) {
     ? 'Published link-readable. Hard-reload the web app; browsers cache favicons '
       + 'independently of pages, so try a fresh tab if it looks unchanged.'
     : 'Domain-only. A browser fetches a favicon WITHOUT credentials, so this URL '
-      + 'will answer it with a Google sign-in page rather than the image — run '
+      + 'will answer it with a Google sign-in page rather than the image â€” run '
       + 'publishFaviconPublic from the dropdown to fix that.');
   return out;
 }
@@ -455,7 +455,7 @@ function publishFavicon(access) {
  * Zero-argument wrappers, because the editor's Run button CANNOT PASS
  * ARGUMENTS. It calls whatever is selected in the dropdown with none, so
  * publishFavicon('anyone') is not something anyone can actually run from there
- * — the instruction to do so was impossible to follow.
+ * â€” the instruction to do so was impossible to follow.
  *
  * Anything meant to be run by hand needs a no-argument entry point with a name
  * that says what it does, because the dropdown is the entire interface.
@@ -465,7 +465,7 @@ function publishFavicon(access) {
  * Publish the icon so a browser can fetch it WITHOUT being signed in.
  *
  * Needed because a favicon request carries no credentials: with domain sharing
- * the CDN answered one with a Google sign-in page — HTML, not a PNG — so the
+ * the CDN answered one with a Google sign-in page â€” HTML, not a PNG â€” so the
  * tab stayed blank. Measured, not assumed.
  *
  * It is one 32x32 copy of the app icon, artwork that already ships in a public
@@ -483,8 +483,8 @@ function publishFaviconDomainOnly() {
 /**
  * What doGet is ACTUALLY serving.
  *
- * A <link rel="icon"> in Index.html cannot set the tab icon — the app is served
- * inside a sandboxed iframe and the tab reads the outer page — so setFaviconUrl
+ * A <link rel="icon"> in Index.html cannot set the tab icon â€” the app is served
+ * inside a sandboxed iframe and the tab reads the outer page â€” so setFaviconUrl
  * is the only lever, and the question is whether it is being applied. This runs
  * doGet and reads it back off the HtmlOutput rather than reasoning about it.
  *
@@ -496,7 +496,7 @@ function publishFaviconDomainOnly() {
  * Which URL form will setFaviconUrl actually accept?
  *
  * doGet wrapped the call in a try/catch so a bad icon could never take the app
- * down — and then swallowed the reason, so the tab stayed blank with no
+ * down â€” and then swallowed the reason, so the tab stayed blank with no
  * explanation anywhere. faviconCheck reported "(none set)" and could not say
  * why. Each candidate is tried against a throwaway HtmlOutput here, and the one
  * that survives is the one worth serving.
@@ -505,7 +505,7 @@ function publishFaviconDomainOnly() {
  * IT VALIDATES THE FILE EXTENSION, not the image.
  *
  * Every Drive-hosted form was refused with "The favicon icon image type is not
- * supported" — including one already proven to return image/png, 2140 bytes,
+ * supported" â€” including one already proven to return image/png, 2140 bytes,
  * with CORS open. setFaviconUrl is not fetching anything; it is reading the end
  * of the URL, and a Drive link never ends in .png.
  *
@@ -516,7 +516,7 @@ function publishFaviconDomainOnly() {
  * is built from.
  *
  * The Drive forms stay LAST as a fallback for a repository that goes private
- * again — they are refused today, which costs one loop iteration and no
+ * again â€” they are refused today, which costs one loop iteration and no
  * behaviour, and they would still be refused, so this is honestly closer to
  * documentation than to a fallback.
  */
@@ -550,8 +550,8 @@ function faviconCandidates_() {
  * "Refresh each time the page opens" and "cache" contradict each other, and the
  * cache is not decoration: Apps Script egresses through addresses shared with
  * every other script Google runs, against an unauthenticated GitHub limit of 60
- * requests an hour. Being rate-limited fails closed — latestRelease_ returns
- * null and the chips fall back to constants — so refetching per load would
+ * requests an hour. Being rate-limited fails closed â€” latestRelease_ returns
+ * null and the chips fall back to constants â€” so refetching per load would
  * trade a stale link for no link at all on a busy day.
  *
  * A floor makes both true: this is safe to call as often as you like, and it
@@ -598,7 +598,7 @@ function faviconProbe() {
   var ok = results.filter(function (r) { return r.accepted; });
   Logger.log(ok.length
     ? 'setFaviconUrl accepts ' + ok.length + ' of these. faviconUrl_ will use the first.'
-    : 'setFaviconUrl rejects every form — the errors above say why.');
+    : 'setFaviconUrl rejects every form â€” the errors above say why.');
   return results;
 }
 
@@ -621,11 +621,11 @@ function faviconCheck() {
   Logger.log(JSON.stringify(info, null, 2));
   if (info.matches) {
     Logger.log('The server is serving the icon. If the tab still shows Google\'s, it is '
-      + 'the browser favicon cache — open the app in a PRIVATE window to confirm.');
+      + 'the browser favicon cache â€” open the app in a PRIVATE window to confirm.');
   } else {
     // "(none set)" means setFaviconUrl was called and REFUSED the URL, since
     // doGet only skips it when nothing is stored. Say which forms it will take.
-    Logger.log('Not served. setFaviconUrl refused the URL — probing alternatives:');
+    Logger.log('Not served. setFaviconUrl refused the URL â€” probing alternatives:');
     info.probe = faviconProbe();
   }
   return info;
@@ -664,7 +664,7 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   /*
    * Try each form until one is accepted. setFaviconUrl validates the URL and
-   * THROWS on one it dislikes, and a single hard-coded form was rejected — the
+   * THROWS on one it dislikes, and a single hard-coded form was rejected â€” the
    * catch then swallowed the reason and the tab was silently iconless. Serving
    * the app still matters more than the icon, so the loop never rethrows.
    */
@@ -681,7 +681,7 @@ function include(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
 
-// ─── bootstrap ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ bootstrap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /** Quota + config + capability flags, so the UI knows what the server can do. */
 /*
  * Which Google types can actually be exported, ACCORDING TO GOOGLE.
@@ -689,7 +689,7 @@ function include(name) {
  * This used to be a hand-written table in Dashboard.html, and a hand-written
  * table of Google's capabilities is wrong the day Google ships a new type. It
  * already was: Google Vids was missing, and the sibling desktop app hit the same
- * gap from the other side — it offered six .gvid stubs for copying, robocopy
+ * gap from the other side â€” it offered six .gvid stubs for copying, robocopy
  * failed every one with "Incorrect function", and the files could never transfer
  * because a native has no bytes behind it.
  *
@@ -719,7 +719,7 @@ function getBootstrap() {
   if (V_SHARED_DRIVES) {
     try {
       var tok = null;
-      do { // paginate — an account on more than 100 shared drives is plausible
+      do { // paginate â€” an account on more than 100 shared drives is plausible
         var dl = Drive.Drives.list({
           pageSize: 100, fields: 'nextPageToken,drives(id,name)', pageToken: tok || undefined
         });
@@ -727,13 +727,13 @@ function getBootstrap() {
         tok = dl.nextPageToken || null;
       } while (tok && drives.length < 500);
     } catch (e) {
-      drives = []; // no shared-drive access on this account — not fatal
+      drives = []; // no shared-drive access on this account â€” not fatal
     }
   }
   return {
     user: (about.user || {}).emailAddress || '',
     quota: {
-      // `limit` is absent on pooled/unlimited Workspace storage — 0 means "no cap
+      // `limit` is absent on pooled/unlimited Workspace storage â€” 0 means "no cap
       // published", not "no space". usageInDriveTrash is a SUBSET of usageInDrive,
       // and `usage` also carries Gmail + Photos, which is why they never match.
       limit: Number(q.limit || 0),
@@ -755,7 +755,7 @@ function getBootstrap() {
   };
 }
 
-// ─── the scan ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ the scan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * One chunk of the inventory. Client calls repeatedly until done=true.
  *
@@ -771,7 +771,7 @@ function getBootstrap() {
  * Only one level: the picker expands on demand, and fetching a whole tree to
  * show the top of it would make opening the dialog slower than the scan.
  *
- * `parentId` may be 'root' for My Drive, or a shared drive's id — a shared
+ * `parentId` may be 'root' for My Drive, or a shared drive's id â€” a shared
  * drive's id doubles as its root folder id, which is why one call covers both.
  */
 function listFolders(parentId, driveId) {
@@ -841,7 +841,7 @@ function scanChunk(opts) {
                : KIND_BINARY;
 
       // quotaBytesUsed is the ONLY honest storage number. `size` is absent on
-      // natives, and natives consume ~0 quota — deleting them frees nothing.
+      // natives, and natives consume ~0 quota â€” deleting them frees nothing.
       var bytes = Number(f.quotaBytesUsed || 0);
       if (!bytes && f.size) bytes = Number(f.size);
 
@@ -881,8 +881,8 @@ function scanChunk(opts) {
  * a drive only needs the running sums, so shipping every filename back would be
  * wasted payload. Client-paginated for the same 6-minute reason.
  *
- * Note shared-drive content does NOT count against a user's personal quota — it
- * bills to the shared drive's own pool — so these numbers must never be added
+ * Note shared-drive content does NOT count against a user's personal quota â€” it
+ * bills to the shared drive's own pool â€” so these numbers must never be added
  * to the My Drive figures.
  */
 function measureDriveChunk(opts) {
@@ -932,7 +932,7 @@ function activityDays_(f, nowMs) {
   return Math.floor((nowMs - best) / 86400000);
 }
 
-// ─── config store (the QNAP agent polls this) ────────────────────────────────
+// â”€â”€â”€ config store (the QNAP agent polls this) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function getConfig() {
   var raw = PropertiesService.getScriptProperties().getProperty(PROP_CONFIG);
   var cfg = raw ? JSON.parse(raw) : {};
@@ -947,7 +947,7 @@ function getConfig() {
 }
 
 function saveConfig(cfg) {
-  // Script Properties are shared across every user of this web app — without
+  // Script Properties are shared across every user of this web app â€” without
   // this gate any UWC account could rewrite the QNAP mappings.
   if (!isOwner_()) {
     return { ok: false, error: 'Only ' + OWNERS.join(', ') + ' can change the NAS configuration.' };
@@ -971,7 +971,7 @@ function saveConfig(cfg) {
 }
 
 /**
- * Agent endpoint. The QNAP box polls this outbound — Apps Script can never
+ * Agent endpoint. The QNAP box polls this outbound â€” Apps Script can never
  * reach a LAN address, so the NAS must always be the one reaching out.
  */
 function doPost(e) {
@@ -1017,7 +1017,7 @@ function receiveNasReport_(body) {
   return { ok: true, received: files.length, manifestFileId: file.getId() };
 }
 
-/** Ids the NAS has confirmed it holds — the only files trash may touch. */
+/** Ids the NAS has confirmed it holds â€” the only files trash may touch. */
 function getVerifiedIds() {
   if (!V_NAS_VERIFY) return { enabled: false, ids: [], receivedAt: null };
   var id = PropertiesService.getScriptProperties().getProperty(PROP_MANIFEST);
@@ -1034,17 +1034,17 @@ function getVerifiedIds() {
   }
 }
 
-// ─── converting natives into real files ──────────────────────────────────────
+// â”€â”€â”€ converting natives into real files â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /*
  * A Google-native file has no bytes. Drive for Desktop shows a .gdoc/.gvid stub
- * of a few hundred bytes that cannot even be read — the sibling desktop app hit
+ * of a few hundred bytes that cannot even be read â€” the sibling desktop app hit
  * exactly this, offered six .gvid stubs for copying, and robocopy failed every
  * one with "Incorrect function". No amount of work on the desktop side fixes it:
  * the content only exists inside Google.
  *
  * This is the half that can only happen here. Export through Drive, write the
  * result back into Drive BESIDE the original, and Drive for Desktop syncs it
- * down as a real file — at which point the desktop app copies it to the NAS like
+ * down as a real file â€” at which point the desktop app copies it to the NAS like
  * anything else, with no new credential anywhere and no second sign-in.
  *
  * Beside the original, not into a staging tree, because the folder structure is
@@ -1088,14 +1088,14 @@ function extForMime_(mime) {
 
 /**
  * Which export Google offers for this native type, preferring the format worth
- * keeping. Returns null when Google offers none — in which case the file simply
+ * keeping. Returns null when Google offers none â€” in which case the file simply
  * cannot be converted and saying so is the only honest answer.
  */
 /*
  * Every format Google offers for this type, best first.
  *
  * A LIST rather than one choice, because Drive refuses to export anything over
- * roughly 10 MB and the limit applies to the produced file — so a Doc too big
+ * roughly 10 MB and the limit applies to the produced file â€” so a Doc too big
  * as .docx often fits as .pdf, and nearly always as .txt. Giving up at the
  * first refusal threw away files that were perfectly exportable in a lighter
  * format. The order is "most faithful first", so a fallback is only ever
@@ -1138,7 +1138,7 @@ function chooseExport_(mime, exportFormats) {
  * The type to UPLOAD the result as, which is not always the type it was
  * exported as. Apps Script exports with mime application/vnd.google-apps.script
  * +json, and Drive refuses to create a file from uploaded content carrying any
- * google-apps type — "Invalid MIME type provided for the uploaded content".
+ * google-apps type â€” "Invalid MIME type provided for the uploaded content".
  * Eight Sites and Apps Script projects failed exactly there. Deriving the
  * upload type from the EXTENSION keeps it to types Drive will accept.
  */
@@ -1148,7 +1148,7 @@ function chooseExport_(mime, exportFormats) {
  * The temporary copy is ALWAYS trashed, including when the export of it fails,
  * because a half-finished workaround that litters someone's Drive with
  * "(temporary export copy)" files is worse than the failure it was working
- * around. Trashed rather than permanently deleted — this tool never destroys.
+ * around. Trashed rather than permanently deleted â€” this tool never destroys.
  */
 function exportViaCopy_(f, cand, token, parent, candName) {
   var copyId = null;
@@ -1167,7 +1167,7 @@ function exportViaCopy_(f, cand, token, parent, candName) {
     if (resp.getResponseCode() !== 200) {
       var b = '';
       try { b = resp.getContentText().slice(0, 300); } catch (e2) { b = ''; }
-      return { id: null, why: 'copied it to get ownership, but Drive still refused the export — ' +
+      return { id: null, why: 'copied it to get ownership, but Drive still refused the export â€” ' +
                              explainDriveError_(resp.getResponseCode(), b) };
     }
     var blob = resp.getBlob().setName(candName).setContentType(uploadMimeFor_(cand.ext));
@@ -1210,27 +1210,27 @@ function explainDriveError_(code, body) {
 
   var SAY = {
     cannotExportFile: 'Google will not export this particular file, even though it exports ' +
-                      'others of its type. Open it and use File → Download instead.',
-    fileNotExportable: 'this file cannot be exported at all — open it and use File → Download.',
+                      'others of its type. Open it and use File â†’ Download instead.',
+    fileNotExportable: 'this file cannot be exported at all â€” open it and use File â†’ Download.',
     insufficientFilePermissions: 'you have read access but not enough to export it. Ask the ' +
-                                 'owner, or open it and use File → Download.',
+                                 'owner, or open it and use File â†’ Download.',
     forbidden: 'access was refused. If it belongs to someone else, ask them to export it.',
-    rateLimitExceeded: 'too many requests too quickly. Run Convert again in a few minutes — ' +
+    rateLimitExceeded: 'too many requests too quickly. Run Convert again in a few minutes â€” ' +
                        'everything already done will be skipped.',
     userRateLimitExceeded: 'this account hit a Drive rate limit. Run Convert again shortly; ' +
                            'completed files are skipped.',
-    notFound: 'Drive can no longer find it — it may have been moved or trashed mid-run.'
+    notFound: 'Drive can no longer find it â€” it may have been moved or trashed mid-run.'
   };
   if (SAY[reason]) return SAY[reason];
   if (message) return message + ' (HTTP ' + code + (reason ? ', ' + reason : '') + ')';
   /*
-   * No reason and no message means the body was not the JSON shape expected —
+   * No reason and no message means the body was not the JSON shape expected â€”
    * an HTML error page, or empty. Carry a slice of it rather than flattening to
    * a bare status: "HTTP 403" told us nothing about the one file that survived
    * a whole-drive run, and there was no way to find out more from the screen.
    */
   var raw = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (raw) return 'HTTP ' + code + ' — Google said: ' + raw.slice(0, 140);
+  if (raw) return 'HTTP ' + code + ' â€” Google said: ' + raw.slice(0, 140);
   return 'HTTP ' + code + ' with no explanation from Google';
 }
 
@@ -1264,7 +1264,7 @@ function uploadMimeFor_(ext) {
  * goes down: converting produces a new file beside the original and leaves the
  * original exactly where it was. So after converting 160 of 161 the dashboard
  * still announced 161 to convert, and the button still offered to do all of
- * them — the work was invisible, and the only way to discover it had happened
+ * them â€” the work was invisible, and the only way to discover it had happened
  * was to start another run and read "already done".
  *
  * The destination tree is walked once and reduced to a set of names, rather
@@ -1280,7 +1280,7 @@ function uploadMimeFor_(ext) {
  * already done and queued everything. The run then re-walked 161 files to skip
  * 160 of them, and reported progress against the wrong denominator.
  *
- * Returns null when the conversion folder does not exist yet — meaning nothing
+ * Returns null when the conversion folder does not exist yet â€” meaning nothing
  * has ever been converted, which is different from "checked and found nothing".
  */
 function convertedNameSet_() {
@@ -1323,8 +1323,8 @@ function convertedNameSet_() {
  * Just the names already in the conversion tree.
  *
  * The client can do the comparison itself: the scan already carries every
- * native's name and mimeType, so asking Drive for them again — 161 round trips
- * in conversionStatus — was work that had already been done. Returning the name
+ * native's name and mimeType, so asking Drive for them again â€” 161 round trips
+ * in conversionStatus â€” was work that had already been done. Returning the name
  * list instead means the check needs nothing from the scan, so it can be fired
  * at the same moment the scan starts and be waiting by the time it ends.
  */
@@ -1356,8 +1356,8 @@ function conversionStatus(ids) {
 }
 
 /**
- * What a run would actually do. `convertible` is the QUEUE — only what is left
- * — so the dialog, the progress denominator and the work all agree.
+ * What a run would actually do. `convertible` is the QUEUE â€” only what is left
+ * â€” so the dialog, the progress denominator and the work all agree.
  */
 function previewConversion(ids) {
   var about = Drive.About.get({ fields: 'exportFormats' });
@@ -1383,21 +1383,21 @@ function previewConversion(ids) {
 }
 
 /**
- * Convert a batch. Returns `remaining` so the caller can drive it in chunks —
+ * Convert a batch. Returns `remaining` so the caller can drive it in chunks â€”
  * the same continuation pattern the scan uses, because one Apps Script call
  * cannot outlive six minutes and a Drive with hundreds of Docs will not fit.
  */
 /*
- * WHERE THE CONVERTED FILE GOES — and this was wrong in v11/v13.
+ * WHERE THE CONVERTED FILE GOES â€” and this was wrong in v11/v13.
  *
  * It used to be written beside the original, argued for because the NAS mirror
  * path would then already be correct. That only holds for files you OWN. Run
  * against "Everything I can see" and most originals live in other people's
  * Drives, which produced exactly three failures and no successes:
  *
- *   "the file has no parent folder to write beside"   — shared with you, no
+ *   "the file has no parent folder to write beside"   â€” shared with you, no
  *                                                       visible parent
- *   "Insufficient permissions for the specified parent" — readable, not writable
+ *   "Insufficient permissions for the specified parent" â€” readable, not writable
  *   and even where it would have worked, Drive for Desktop does not sync other
  *   people's folders, so the output could never have reached the NAS anyway.
  *
@@ -1428,7 +1428,7 @@ function findOrCreateFolder_(name, parentId, cache) {
 /**
  * The original's folder names, outermost first. Best effort: a file shared from
  * elsewhere may expose no readable parent, in which case it lands directly in
- * the conversion root rather than failing — the point is to produce the file.
+ * the conversion root rather than failing â€” the point is to produce the file.
  */
 function pathSegmentsFor_(file, nameCache) {
   var segs = [], cur = file, guard = 0;
@@ -1505,7 +1505,7 @@ function convertNatives(ids) {
     }
 
     /*
-     * Already converted on an earlier run — additive means never doing it twice.
+     * Already converted on an earlier run â€” additive means never doing it twice.
      * Scoped to the destination folder. The previous version searched with
      * corpora:'allDrives', which reported 110 files as "already done" while not
      * one converted copy existed; a check that can produce a false positive is
@@ -1534,7 +1534,7 @@ function convertNatives(ids) {
     /*
      * Try each format Google offers, best first, and step down on a size
      * refusal. A Doc too large as .docx frequently fits as .pdf and nearly
-     * always as .txt — stopping at the first refusal discarded files that were
+     * always as .txt â€” stopping at the first refusal discarded files that were
      * exportable, just not in the nicest format.
      */
     var lastWhy = 'Drive refused the export';
@@ -1559,13 +1559,13 @@ function convertNatives(ids) {
         if (/exportSizeLimitExceeded/.test(body)) {
           tooBig = true;
           lastWhy = 'too large for Drive to export in any offered format ' +
-                    '(Google caps native export at about 10 MB) — download it by hand from Google';
+                    '(Google caps native export at about 10 MB) â€” download it by hand from Google';
           continue;   // a lighter format may still fit
         }
         /*
          * Say what Google objected to, not just the status. "HTTP 403" covers
          * "you may only read this file", "this type cannot be exported at all"
-         * and "you are going too fast" — three different problems with three
+         * and "you are going too fast" â€” three different problems with three
          * different answers, and the reason code distinguishes them.
          */
         /*
@@ -1573,7 +1573,7 @@ function convertNatives(ids) {
          *
          * "The user does not have sufficient permissions for this file" means
          * you may read someone else's file but not export it. Copying it makes
-         * YOU the owner of the copy, and you can always export your own file —
+         * YOU the owner of the copy, and you can always export your own file â€”
          * so copy, export the copy, then bin the copy.
          *
          * Note this is the opposite conclusion to the stub question, and both
@@ -1595,12 +1595,12 @@ function convertNatives(ids) {
           lastWhy = viaCopy.why + whoOwns_(f);
           continue;
         }
-        lastWhy = 'Drive refused the export — ' + explainDriveError_(code, body) + whoOwns_(f);
+        lastWhy = 'Drive refused the export â€” ' + explainDriveError_(code, body) + whoOwns_(f);
         continue;
       }
 
       try {
-        // setContentType, not the response's own type — see uploadMimeFor_.
+        // setContentType, not the response's own type â€” see uploadMimeFor_.
         var blob = resp.getBlob().setName(candName).setContentType(uploadMimeFor_(cand.ext));
         var created = Drive.Files.create(
           { name: candName, parents: [parent] }, blob, { supportsAllDrives: true }
@@ -1622,9 +1622,9 @@ function convertNatives(ids) {
   return { done: done, skipped: skipped, failed: failed, remaining: remaining };
 }
 
-// ─── trash (reversible only) ─────────────────────────────────────────────────
+// â”€â”€â”€ trash (reversible only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
- * Move files to Drive trash. Never a permanent delete — emptying the trash
+ * Move files to Drive trash. Never a permanent delete â€” emptying the trash
  * stays a deliberate human action in the Drive UI.
  * Returns exactly what it did, per file, so the UI never has to assume.
  */
@@ -1652,7 +1652,7 @@ function trashFiles(ids) {
   return { trashed: trashed, failed: failed, skipped: skipped, gated: !!gate };
 }
 
-// ─── manifest export ─────────────────────────────────────────────────────────
+// â”€â”€â”€ manifest export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /** Rows the QNAP agent (or a human running rclone) can act on directly. */
 function buildManifestCsv(rows) {
   var head = ['drive_id', 'name', 'path', 'class', 'mime', 'bytes',
