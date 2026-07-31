@@ -1283,12 +1283,19 @@ function dsShowConvertPlan(p) {
     'most originals live in other people\'s Drives: you cannot write there, and Drive for Desktop ' +
     'would never sync the result down to your machine. Add that folder as a Google Drive source in ' +
     'Storage Mapper once the files appear.</small></div>' +
+    (p.alreadyDone
+      ? '<div class="note"><b>' + p.alreadyDone.toLocaleString() + ' already converted</b> — ' +
+        'these are skipped, not done again.</div>'
+      : '') +
     (conv.length
-      ? '<div class="note"><b>' + conv.length.toLocaleString() + ' file(s) will be converted</b><div style="margin-top:5px">' +
+      ? '<div class="note"><b>' + conv.length.toLocaleString() + ' file(s) still to convert</b>' +
+        '<div style="margin-top:5px">' +
         Object.keys(byExt).map(function (e) {
           return '<div>· ' + byExt[e].toLocaleString() + ' → <b>.' + dsEsc(e) + '</b></div>';
         }).join('') + '</div></div>'
-      : '<div class="note">Nothing here can be converted.</div>') +
+      : p.alreadyDone
+        ? '<div class="note">Nothing left to convert.</div>'
+        : '<div class="note">Nothing here can be converted.</div>') +
     (imp.length
       ? '<div class="note warn-note"><b>' + imp.length.toLocaleString() + ' cannot be converted</b> — ' +
         'Google offers no export format for them, so no tool can produce a file.<div style="margin-top:5px">' +
@@ -1301,7 +1308,8 @@ function dsShowConvertPlan(p) {
     'export limit and reported here.</small></div>' +
     '<div class="dlgrow">' +
     '<button class="btn ghost" id="convCancel">Cancel</button>' +
-    (conv.length ? '<button class="btn" id="convGo">Convert ' + conv.length.toLocaleString() + '</button>' : '') +
+    (conv.length ? '<button class="btn" id="convGo">Convert ' + conv.length.toLocaleString() +
+      (p.alreadyDone ? ' remaining' : '') + '</button>' : '') +
     '</div>');
 
   document.getElementById('convCancel').addEventListener('click', dsCloseDialog);
@@ -1322,8 +1330,15 @@ function dsShowConvertPlan(p) {
  * the same continuation the scan uses.
  */
 function dsRunConvert() {
+  /*
+   * `total` is the QUEUE, which now holds only what is left — previewConversion
+   * filters out anything already converted. It used to be handed every native
+   * in the scan, so a run with one file to do announced "Converting 0 of 161"
+   * and then skipped 160, which read as though it were starting over.
+   */
   var total = DS_CONV_DONE + DS_CONV_QUEUE.length + DS_CONV_FAILED.length + DS_CONV_SKIPPED;
-  dsDialog('<h3>Converting…</h3>' +
+  dsDialog('<h3>Converting ' + total.toLocaleString() +
+    (total === 1 ? ' file…' : ' remaining files…') + '</h3>' +
     '<p class="hint">' + DS_CONV_DONE.toLocaleString() + ' of ' + total.toLocaleString() +
     ' done. Each batch runs for about 90 seconds — leave this tab open.</p>' +
     '<div class="bar"><i style="width:' +
@@ -1629,10 +1644,17 @@ function dsRenderApps() {
         '<b>' + dsEsc(a.full) + ' <span class="av">' + dsEsc(a.version) + '</span></b>' +
         '<span class="ad">' + dsEsc(a.desc) + '</span>' +
         '<span class="al">' +
-          '<a href="' + dsEsc(a.download) + '" target="_blank" rel="noopener">⤓ Download latest</a>' +
+          '<a href="' + dsEsc(a.download) + '" download>⤓ Download the installer</a>' +
           '<a href="' + dsEsc(a.readme) + '" target="_blank" rel="noopener">How it works</a>' +
+          (a.releases
+            ? '<a href="' + dsEsc(a.releases) + '" target="_blank" rel="noopener">All releases</a>'
+            : '') +
         '</span>' +
-        '<span class="an-note">Needs access to the private <code>divergentinc2021</code> repo.</span>' +
+        // The direct link names a version, so it 404s if the constant on the
+        // server goes stale. "All releases" above is the escape hatch, and
+        // naming the file makes a wrong one obvious rather than puzzling.
+        '<span class="an-note">' + dsEsc(a.asset || '') +
+        ' — needs access to the private <code>divergentinc2021</code> repo.</span>' +
       '</span></span>';
   }).join('');
 }

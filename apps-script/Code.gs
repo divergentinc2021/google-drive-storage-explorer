@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v22';
+var APP_VERSION = 'v23';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -41,30 +41,60 @@ var APP_VERSION = 'v22';
  * BUMP THESE ON RELEASE. The download links point at /releases/latest, which
  * always resolves, so a stale number here never produces a broken download.
  */
-var SIBLING_APPS = [
+/*
+ * ONE version string per app. The tag and the installer filename both carry the
+ * version, so a direct download URL names it twice — and a link that repeats a
+ * constant three times rots the first time somebody updates two of them.
+ * siblingApps_() builds the URLs, so a release is one edit here.
+ *
+ * The download is the .exe itself rather than /releases/latest, because that
+ * lands on the repo page and takes another click. The cost is that a stale
+ * VERSION below now 404s instead of merely displaying wrong, so every card also
+ * carries an "All releases" link that cannot go stale.
+ */
+var SIBLING_APPS_RAW = [
   {
     key: 'mapper',
     name: 'Mapper',
     full: 'Storage Mapper',
-    version: 'v0.8.1',
+    version: '0.8.1',
+    repo: 'divergentinc2021/storage-mapper',
+    tagTpl: 'v{v}',
+    assetTpl: 'Storage.Mapper.Setup.{v}.exe',
+    readme: 'https://github.com/divergentinc2021/storage-mapper#readme',
     desc: 'Copies what this page identifies onto the NAS. Finds files already there ' +
           'under a different name, proves every file is readable before it starts, ' +
-          'and never deletes anything.',
-    download: 'https://github.com/divergentinc2021/storage-mapper/releases/latest',
-    readme: 'https://github.com/divergentinc2021/storage-mapper#readme'
+          'and never deletes anything.'
   },
   {
     key: 'desktop',
     name: 'Disk Explorer',
     full: 'Disk Storage Explorer',
-    version: 'v0.6.0',
+    version: '0.6.0',
+    repo: 'divergentinc2021/google-drive-storage-explorer',
+    tagTpl: 'desktop-v{v}',
+    assetTpl: 'DiskStorageExplorer-Setup-{v}.exe',
+    readme: 'https://github.com/divergentinc2021/google-drive-storage-explorer/tree/DesktopVersion#readme',
     desc: 'This same treemap for local disks instead of Drive — your own machine, ' +
           'an external drive, or a colleague\'s. Right-click to bin, with Windows ' +
-          'system and installed-program folders refused.',
-    download: 'https://github.com/divergentinc2021/google-drive-storage-explorer/releases/latest',
-    readme: 'https://github.com/divergentinc2021/google-drive-storage-explorer/tree/DesktopVersion#readme'
+          'system and installed-program folders refused.'
   }
 ];
+
+function siblingApps_() {
+  return SIBLING_APPS_RAW.map(function (a) {
+    var tag = a.tagTpl.replace('{v}', a.version);
+    var asset = a.assetTpl.replace('{v}', a.version);
+    return {
+      key: a.key, name: a.name, full: a.full, desc: a.desc,
+      version: 'v' + a.version,
+      download: 'https://github.com/' + a.repo + '/releases/download/' + tag + '/' + asset,
+      asset: asset,
+      releases: 'https://github.com/' + a.repo + '/releases',
+      readme: a.readme
+    };
+  });
+}
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -272,7 +302,7 @@ function getBootstrap() {
     config: getConfig(),
     caps: { nasVerify: V_NAS_VERIFY, sharedDrives: V_SHARED_DRIVES },
     exportFormats: exportFormatMap_(about),
-    siblingApps: SIBLING_APPS,
+    siblingApps: siblingApps_(),
     isOwner: isOwner_(),
     rootId: Drive.Files.get('root', { fields: 'id' }).id,
     version: APP_VERSION,
@@ -766,11 +796,22 @@ function uploadMimeFor_(ext) {
  * than asking Drive about each file in turn: one query per folder beats one per
  * file, and the tree is shallow because it mirrors folders that hold natives.
  */
-function conversionStatus(ids) {
-  var out = { converted: 0, pending: 0, checked: false, names: 0 };
+/*
+ * Every file name already sitting in the conversion tree.
+ *
+ * Shared by conversionStatus and previewConversion so the two cannot disagree.
+ * They did: the tile said "Convert 1" from conversionStatus while the dialog
+ * said "161 will be converted", because the preview had no idea what was
+ * already done and queued everything. The run then re-walked 161 files to skip
+ * 160 of them, and reported progress against the wrong denominator.
+ *
+ * Returns null when the conversion folder does not exist yet — meaning nothing
+ * has ever been converted, which is different from "checked and found nothing".
+ */
+function convertedNameSet_() {
   var myRoot;
   try { myRoot = Drive.Files.get('root', { fields: 'id' }).id; }
-  catch (e) { return out; }
+  catch (e) { return null; }
 
   var q = "name = '" + CONVERT_ROOT_NAME + "' and '" + myRoot + "' in parents and " +
           "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
@@ -778,10 +819,9 @@ function conversionStatus(ids) {
   try {
     var hit = Drive.Files.list({ q: q, fields: 'files(id)', pageSize: 1, supportsAllDrives: true });
     root = hit.files && hit.files.length ? hit.files[0].id : null;
-  } catch (e) { return out; }
-  if (!root) { out.checked = true; out.pending = (ids || []).length; return out; }
+  } catch (e) { return null; }
+  if (!root) return {};
 
-  // Breadth-first over the mirrored tree, collecting file names.
   var have = {}, queue = [root], guard = 0;
   while (queue.length && guard++ < 400) {
     var folder = queue.shift(), tok = null;
@@ -801,6 +841,13 @@ function conversionStatus(ids) {
       tok = page.nextPageToken || null;
     } while (tok);
   }
+  return have;
+}
+
+function conversionStatus(ids) {
+  var out = { converted: 0, pending: 0, checked: false, names: 0 };
+  var have = convertedNameSet_();
+  if (have === null) return out;
   out.names = Object.keys(have).length;
   out.checked = true;
 
@@ -818,10 +865,15 @@ function conversionStatus(ids) {
   return out;
 }
 
+/**
+ * What a run would actually do. `convertible` is the QUEUE — only what is left
+ * — so the dialog, the progress denominator and the work all agree.
+ */
 function previewConversion(ids) {
   var about = Drive.About.get({ fields: 'exportFormats' });
   var fmts = about.exportFormats || {};
-  var out = { convertible: [], impossible: [], missing: 0 };
+  var have = convertedNameSet_() || {};
+  var out = { convertible: [], impossible: [], alreadyDone: 0, missing: 0 };
 
   (ids || []).slice(0, 2000).forEach(function (id) {
     var f;
@@ -829,9 +881,13 @@ function previewConversion(ids) {
       f = Drive.Files.get(id, { fields: 'id,name,mimeType,parents', supportsAllDrives: true });
     } catch (e) { out.missing++; return; }
     if (String(f.mimeType).indexOf('application/vnd.google-apps.') !== 0) return;
-    var pick = chooseExport_(f.mimeType, fmts);
-    if (pick) out.convertible.push({ id: f.id, name: f.name, as: pick.ext });
-    else out.impossible.push({ id: f.id, name: f.name, kind: f.mimeType.slice(28) });
+    var cands = exportCandidates_(f.mimeType, fmts);
+    if (!cands.length) {
+      out.impossible.push({ id: f.id, name: f.name, kind: f.mimeType.slice(28) });
+      return;
+    }
+    if (cands.some(function (c) { return have[f.name + '.' + c.ext]; })) { out.alreadyDone++; return; }
+    out.convertible.push({ id: f.id, name: f.name, as: cands[0].ext });
   });
   return out;
 }
