@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v23';
+var APP_VERSION = 'v24';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -842,6 +842,21 @@ function convertedNameSet_() {
     } while (tok);
   }
   return have;
+}
+
+/**
+ * Just the names already in the conversion tree.
+ *
+ * The client can do the comparison itself: the scan already carries every
+ * native's name and mimeType, so asking Drive for them again — 161 round trips
+ * in conversionStatus — was work that had already been done. Returning the name
+ * list instead means the check needs nothing from the scan, so it can be fired
+ * at the same moment the scan starts and be waiting by the time it ends.
+ */
+function convertedNames() {
+  var have = convertedNameSet_();
+  if (have === null) return { checked: false, names: [] };
+  return { checked: true, names: Object.keys(have) };
 }
 
 function conversionStatus(ids) {
