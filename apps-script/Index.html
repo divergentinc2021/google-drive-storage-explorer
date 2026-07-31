@@ -43,9 +43,15 @@
     <div class="topactions">
       <label class="field">
         <span>Scope</span>
+        <!--
+          "Everything I can see" first, and therefore the default. It is the
+          common scan, and it used to be chosen for you by the startup picker —
+          which no longer opens, so the order of these two now decides what an
+          untouched page scans.
+        -->
         <select id="scope">
-          <option value="owned">Files I own (counts against quota)</option>
           <option value="all">Everything I can see</option>
+          <option value="owned">Files I own (counts against quota)</option>
         </select>
       </label>
       <button class="btn primary" id="btnScan">Scan Drive</button>
