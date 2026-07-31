@@ -379,6 +379,15 @@ select {
 .tabpane .row .num { min-width: 0; padding-left: 8px; }
 .tabpane .row .bar { flex: 1 1 auto; min-width: 30px; }
 
+/* Secondary actions under a panel head, where two buttons will not fit beside
+   the heading in a 380px rail. */
+.rowbtns { display: flex; gap: 6px; margin: 0 0 8px; flex-wrap: wrap; }
+.rowbtns .btn { flex: 1 1 auto; justify-content: center; }
+/* The reclaimable rows carry a checkbox as well; keep it from squeezing the name. */
+.tabpane #bigList .row { gap: 7px; }
+.tabpane #bigList input[type=checkbox] { flex: none; margin: 0; }
+.tabpane #bigList .ag { display: none; }   /* age is in the tooltip; width is scarcer */
+
 .sidebody { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 12px 10px; }
 .tabpane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .tabpane[hidden] { display: none; }
@@ -468,6 +477,14 @@ select {
 
 /* ── conversion dialog ──────────────────────────────────────────────────── */
 .dlgrow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+/*
+ * <dialog id="dlg"> ships a permanent Close button in a <form method="dialog">,
+ * which is right for a plain message but wrong the moment the content supplies
+ * its own footer: the Convert dialog then showed TWO closes, its own aligned
+ * right and the built-in one stranded below it on the left. Hide the built-in
+ * one exactly when the body brings a .dlgrow of its own.
+ */
+.dlgbody:has(.dlgrow) + form { display: none; }
 .warn-note { border-color: var(--serious); background: color-mix(in oklab, var(--serious) 8%, var(--surface-1)); }
 .bar { height: 8px; border-radius: 4px; background: var(--plane); overflow: hidden; margin-top: 10px; }
 .bar i { display: block; height: 100%; background: var(--brand); transition: width .25s; }

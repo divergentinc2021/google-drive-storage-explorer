@@ -136,6 +136,10 @@
       <button role="tab" aria-selected="false" data-tab="tabDrives">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 18.5h9.6a3.8 3.8 0 0 0 .5-7.6 6.2 6.2 0 0 0-11.9 1.7 3.6 3.6 0 0 0 1.8 5.9z"/></svg>
         <span class="tl">Shared<br>drives</span></button>
+      <button role="tab" aria-selected="false" data-tab="tabBig">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V9.5"/><path d="M9.3 20V4.5"/><path d="M14.7 20v-8"/><path d="M20 20v-4.5"/></svg>
+        <span class="tl">Reclaim<br>able</span>
+        <span class="rc" id="bigCount" hidden></span></button>
     </nav>
 
     <div class="sidebody">
@@ -186,42 +190,31 @@
         </p>
         <div class="list" id="driveList"></div>
       </div>
-    </div>
-  </aside>
-  </section>
 
-  <section class="panel">
-    <div class="panelhead">
-      <h2>Reclaimable — biggest dead binaries</h2>
-      <div class="modes">
-        <button class="btn ghost sm" id="btnCsv">Export manifest CSV</button>
-        <button class="btn ghost sm" id="btnRclone">Show rclone commands</button>
-        <button class="btn danger sm" id="btnTrash" disabled>Move selected to Drive trash</button>
+      <!--
+        Reclaimable moved off the bottom of the page and into the rail. It was a
+        full-width table below the fold, which meant the one list that names what
+        actually frees quota was the least visible thing on the dashboard.
+
+        The Storage Mapper paragraph that used to sit here is gone: the header
+        now carries both desktop tools with their versions and links, so keeping
+        a second copy would be two places to update and one of them would rot.
+      -->
+      <div class="tabpane" id="tabBig" role="tabpanel" hidden>
+        <div class="panelhead">
+          <h2>Reclaimable <span class="count" id="bigBytes"></span></h2>
+          <button class="btn danger sm" id="btnTrash" disabled>Trash selected</button>
+        </div>
+        <p class="hint">Biggest dead binaries. These are the only rows that free quota.</p>
+        <div class="rowbtns">
+          <button class="btn ghost sm" id="btnCsv">⤓ Manifest CSV</button>
+          <button class="btn ghost sm" id="btnRclone">rclone commands</button>
+        </div>
+        <div id="gateNote" class="note"></div>
+        <div class="list tablelist" id="bigList"></div>
       </div>
     </div>
-    <!--
-      Linked to /releases/latest, never to the versioned .exe. The installer
-      filename carries the version number, so a direct asset link would 404 on
-      every release; this one always resolves to the newest.
-    -->
-    <div class="note tool">
-      <b>Copying to the NAS is a different job, and there is a tool for it.</b>
-      This dashboard tells you <i>what</i> to move; it cannot reach the NAS at all —
-      Apps Script runs on Google's servers and has no route to a LAN address.
-      <b>Storage Mapper</b> is the desktop app that does the move: it finds what is
-      already on the QNAP under a different name, refuses to copy Google-native
-      stubs, and never deletes anything. Feed it the manifest CSV from this page.
-      <span class="links">
-        <a href="https://github.com/divergentinc2021/storage-mapper/releases/latest"
-           target="_blank" rel="noopener">⤓ Download latest (Windows)</a>
-        <a href="https://github.com/divergentinc2021/storage-mapper#readme"
-           target="_blank" rel="noopener">📖 How it works</a>
-      </span>
-      <small>Both links need access to the private <code>divergentinc2021</code>
-        repo — ask Laurent if GitHub shows a 404.</small>
-    </div>
-    <div id="gateNote" class="note"></div>
-    <div class="list tablelist" id="bigList"></div>
+  </aside>
   </section>
 
   <dialog id="dlg"><div class="dlgbody" id="dlgBody"></div>
