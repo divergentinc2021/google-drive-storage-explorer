@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v15';
+var APP_VERSION = 'v16';
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -537,6 +537,34 @@ function chooseExport_(mime, exportFormats) {
  * Eight Sites and Apps Script projects failed exactly there. Deriving the
  * upload type from the EXTENSION keeps it to types Drive will accept.
  */
+/** Turn Drive's JSON error body into something a person can act on. */
+function explainDriveError_(code, body) {
+  var reason = '', message = '';
+  try {
+    var j = JSON.parse(body);
+    var err = j.error || {};
+    message = err.message || '';
+    if (err.errors && err.errors.length) reason = err.errors[0].reason || '';
+  } catch (e) { /* not JSON; fall back to the raw status below */ }
+
+  var SAY = {
+    cannotExportFile: 'Google will not export this particular file, even though it exports ' +
+                      'others of its type. Open it and use File → Download instead.',
+    fileNotExportable: 'this file cannot be exported at all — open it and use File → Download.',
+    insufficientFilePermissions: 'you have read access but not enough to export it. Ask the ' +
+                                 'owner, or open it and use File → Download.',
+    forbidden: 'access was refused. If it belongs to someone else, ask them to export it.',
+    rateLimitExceeded: 'too many requests too quickly. Run Convert again in a few minutes — ' +
+                       'everything already done will be skipped.',
+    userRateLimitExceeded: 'this account hit a Drive rate limit. Run Convert again shortly; ' +
+                           'completed files are skipped.',
+    notFound: 'Drive can no longer find it — it may have been moved or trashed mid-run.'
+  };
+  if (SAY[reason]) return SAY[reason];
+  if (message) return message + ' (HTTP ' + code + (reason ? ', ' + reason : '') + ')';
+  return 'HTTP ' + code + (reason ? ' — ' + reason : '');
+}
+
 function uploadMimeFor_(ext) {
   var M = {
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -749,7 +777,13 @@ function convertNatives(ids) {
                     '(Google caps native export at about 10 MB) — download it by hand from Google';
           continue;   // a lighter format may still fit
         }
-        lastWhy = 'Drive refused the export (HTTP ' + code + ')';
+        /*
+         * Say what Google objected to, not just the status. "HTTP 403" covers
+         * "you may only read this file", "this type cannot be exported at all"
+         * and "you are going too fast" — three different problems with three
+         * different answers, and the reason code distinguishes them.
+         */
+        lastWhy = 'Drive refused the export — ' + explainDriveError_(code, body);
         continue;
       }
 
