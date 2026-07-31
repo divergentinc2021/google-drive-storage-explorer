@@ -177,6 +177,25 @@ function dsOnBoot(b) {
   sel.appendChild(pick);
 
   dsRenderApps();
+  /*
+   * Then ask whether a newer release exists, and repaint if so. The chips are
+   * drawn immediately from the bootstrap so the header is never empty waiting
+   * on GitHub; this only corrects them. The server applies a ten-minute floor,
+   * so calling it on every load costs nothing most of the time.
+   *
+   * Needed because the release workflow deletes the previous release: a cached
+   * link outlives the file it points at, and the chip 404s until the cache
+   * turns over. This shortens that to one page load.
+   */
+  google.script.run
+    .withSuccessHandler(function (r) {
+      if (!r || !r.apps) return;
+      DS_BOOT.siblingApps = r.apps;
+      dsRenderApps();
+    })
+    .withFailureHandler(function () { /* keep what the bootstrap gave us */ })
+    .refreshReleases();
+
   dsRenderQuota();   // account figures need no scan — show them immediately
   dsRenderTiles();
   dsRenderDrives();
