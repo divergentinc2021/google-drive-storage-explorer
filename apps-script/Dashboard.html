@@ -58,7 +58,26 @@ var MIME_EXT = {
 function dsInit() {
   tmInit('map', 'tip', dsZoomTo, dsOpenInDrive, dsDescribe);
 
-  document.getElementById('btnScan').addEventListener('click', dsShowPicker);
+  /*
+   * Scan scans. It used to open the picker, which meant choosing a scope in the
+   * dropdown and then being asked the same question again in a dialog that
+   * ignored the answer. The picker is for the first run and for picking SEVERAL
+   * targets; the dropdown handles the ordinary single-scope case on its own.
+   */
+  document.getElementById('btnScan').addEventListener('click', dsScan);
+  document.getElementById('scope').addEventListener('change', function () {
+    if (this.value === '__pick__') {
+      // Not a scope — an entry point back to the multi-select.
+      this.value = DS_TARGETS.length > 1 ? '__multi__' : (DS_LAST_SCOPE || 'owned');
+      dsShowPicker();
+      return;
+    }
+    DS_LAST_SCOPE = this.value;
+    // An explicit single choice replaces whatever the picker last set, or the
+    // dropdown would silently have no effect after the picker had been used.
+    DS_TARGETS = [];
+    dsSyncScopeOptions();
+  });
   document.getElementById('btnTheme').addEventListener('click', dsToggleTheme);
   document.getElementById('btnUp').addEventListener('click', dsZoomUp);
   document.getElementById('btnRelief').addEventListener('click', dsToggleRelief);
@@ -147,6 +166,11 @@ function dsOnBoot(b) {
     o.textContent = 'Shared drive: ' + d.name;
     sel.appendChild(o);
   });
+  // The picker's way back in, so multi-select is not a first-run-only feature.
+  var pick = document.createElement('option');
+  pick.value = '__pick__';
+  pick.textContent = '⋯ Choose several…';
+  sel.appendChild(pick);
 
   dsRenderQuota();   // account figures need no scan — show them immediately
   dsRenderTiles();
@@ -910,6 +934,37 @@ function dsShowTab(id) {
  * to compare a shared drive against your own without running the tool twice.
  */
 var DS_TARGETS = [];
+var DS_LAST_SCOPE = null;
+
+/*
+ * Keep the dropdown telling the truth about what will be scanned.
+ *
+ * The picker can select several targets, which no single <option> can express,
+ * so a synthetic one is added and removed as needed. Without this the dropdown
+ * would keep displaying "Files I own" after the picker had chosen three shared
+ * drives — two controls for one setting, disagreeing.
+ */
+function dsSyncScopeOptions() {
+  var sel = document.getElementById('scope');
+  if (!sel) return;
+  var multi = sel.querySelector('option[value="__multi__"]');
+  if (DS_TARGETS.length > 1) {
+    if (!multi) {
+      multi = document.createElement('option');
+      multi.value = '__multi__';
+      sel.insertBefore(multi, sel.firstChild);
+    }
+    multi.textContent = DS_TARGETS.length + ' locations';
+    sel.value = '__multi__';
+  } else {
+    if (multi) multi.remove();
+    if (DS_TARGETS.length === 1) {
+      var t = DS_TARGETS[0];
+      var want = t.driveId ? 'drive:' + t.driveId : t.scope;
+      if (sel.querySelector('option[value="' + want + '"]')) sel.value = want;
+    }
+  }
+}
 
 function dsPickerHtml() {
   var rows = [
@@ -949,6 +1004,7 @@ function dsShowPicker() {
     DS_TARGETS = [].slice.call(document.querySelectorAll('.pickrow input:checked'))
       .map(function (c) { return DS_PICK_ROWS[Number(c.getAttribute('data-i'))]; });
     dsCloseDialog();
+    dsSyncScopeOptions();   // the dropdown must show what was actually chosen
     dsScan();
   });
 }
