@@ -520,6 +520,15 @@ select {
 .pickrow:hover { background: var(--plane); }
 .pickrow:has(input:checked) { border-color: var(--brand); background: color-mix(in oklab, var(--brand) 6%, var(--surface-1)); }
 .pickrow input { width: 16px; height: 16px; accent-color: var(--brand); flex: none; }
+/* The disclosure arrow. A fixed-width spacer keeps rows without one aligned
+   with rows that have one, so the checkboxes form a single column. */
+.pickrow .pickx {
+  flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
+  background: none; color: var(--muted); font-size: 11px; line-height: 20px;
+  cursor: pointer; text-align: center;
+}
+.pickrow .pickx:hover { background: var(--plane); color: var(--text-primary); }
+.pickrow .pickx.spacer { cursor: default; }
 .pickrow .nm { display: grid; font-size: 13px; font-weight: 560; color: var(--text-primary); }
 .pickrow .nm small { font-weight: 400; font-size: 11px; color: var(--muted); }
 .pickfoot { display: flex; justify-content: flex-end; gap: 8px; }

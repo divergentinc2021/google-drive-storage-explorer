@@ -454,10 +454,49 @@ function dsProgress(pct, txt) {
   document.getElementById('progText').textContent = txt;
 }
 
+/*
+ * Keep only what sits under a chosen folder.
+ *
+ * The Drive API has no "all descendants of X" query — you can ask for a folder's
+ * direct children or for a whole drive, nothing between. So a folder target
+ * scans its drive with the same efficient paged listing as before and prunes
+ * afterwards, walking the parent chain that every scanned node already carries.
+ * One flat scan beats a breadth-first crawl issuing a request per folder.
+ */
+function dsPruneToFolders() {
+  var wanted = DS_TARGETS.filter(function (t) {
+    return t.folderId && t.folderId !== 'root' && t.key.indexOf('folder:') === 0;
+  });
+  if (!wanted.length) return;
+
+  var kids = {};
+  DS_ALL.forEach(function (n) {
+    if (!kids[n.parent]) kids[n.parent] = [];
+    kids[n.parent].push(n);
+  });
+
+  var keep = {}, queue = wanted.map(function (t) { return t.folderId; });
+  var guard = 0;
+  while (queue.length && guard++ < 200000) {
+    var id = queue.shift();
+    if (keep[id]) continue;
+    keep[id] = 1;
+    (kids[id] || []).forEach(function (c) { queue.push(c.id); });
+  }
+
+  var before = DS_ALL.length;
+  DS_ALL = DS_ALL.filter(function (n) { return keep[n.id]; });
+  DS_BYID = {};
+  DS_ALL.forEach(function (n) { DS_BYID[n.id] = n; });
+  dsLog('Kept ' + DS_ALL.length.toLocaleString() + ' of ' + before.toLocaleString() +
+        ' items — the rest are outside the folder(s) you picked', 'ok');
+}
+
 function dsScanDone() {
   DS_SCANNING = false;
   document.getElementById('btnScan').disabled = false;
   dsProgress(100, DS_ALL.length.toLocaleString() + ' items · building map…');
+  dsPruneToFolders();   // before the tree is built, or it would include the rest
   dsLog('All pages in. Building the tree and laying out ' +
         DS_ALL.length.toLocaleString() + ' items…');
 
@@ -1253,20 +1292,21 @@ function dsPickerHtml() {
    */
   var rows = [
     { key: 'all', name: 'Everything I can see', sub: 'Includes files shared with you', scope: 'all' },
-    { key: 'owned', name: 'My Drive', sub: 'Only files you own — what counts against your quota', scope: 'owned' }
+    { key: 'owned', name: 'My Drive', sub: 'Only files you own — what counts against your quota',
+      scope: 'owned', folderId: 'root', driveId: '', depth: 0 }
   ];
   ((DS_BOOT && DS_BOOT.drives) || []).forEach(function (d) {
+    // A shared drive's id doubles as its root folder id, which is what lets the
+    // same row be both a scan target and a folder to drill into.
     rows.push({ key: 'drive:' + d.id, name: d.name, sub: 'Shared drive',
-                scope: 'all', driveId: d.id });
+                scope: 'all', driveId: d.id, folderId: d.id, depth: 0 });
   });
   DS_PICK_ROWS = rows;
   return '<h3>What should I map?</h3>' +
-    '<p class="hint">Tick one or more. They are drawn side by side in a single ' +
-    'treemap, so you can compare them directly.</p>' +
+    '<p class="hint">Tick one or more. Open a drive with ▸ to pick a folder inside it — ' +
+    'useful when you are only copying part of it.</p>' +
     '<div class="picklist">' + rows.map(function (r, i) {
-      return '<label class="pickrow"><input type="checkbox" data-i="' + i + '"' +
-        (r.key === 'all' ? ' checked' : '') + '>' +
-        '<span class="nm">' + dsEsc(r.name) + '<small>' + dsEsc(r.sub) + '</small></span></label>';
+      return dsPickRowHtml(r, i, r.key === 'all');
     }).join('') + '</div>' +
     // dlgrow as well as pickfoot: dsDialog suppresses the built-in Close only
     // for a body carrying .dlgrow, and this footer had its own class, so the
@@ -1276,19 +1316,95 @@ function dsPickerHtml() {
 }
 var DS_PICK_ROWS = [];
 
+/*
+ * One row, indented by depth, with a ▸ on anything that can be opened.
+ *
+ * "Everything I can see" has no folder to descend into — it is a scope, not a
+ * place — so it alone has no toggle.
+ */
+function dsPickRowHtml(r, i, checked) {
+  var pad = 10 + (r.depth || 0) * 20;
+  return '<div class="pickrow" style="padding-left:' + pad + 'px" data-row="' + i + '">' +
+    (r.folderId
+      ? '<button class="pickx" data-open="' + i + '" title="Show folders inside">▸</button>'
+      : '<span class="pickx spacer"></span>') +
+    '<input type="checkbox" data-i="' + i + '"' + (checked ? ' checked' : '') + '>' +
+    '<span class="nm">' + dsEsc(r.name) +
+    '<small>' + dsEsc(r.sub) + '</small></span></div>';
+}
+
 function dsShowPicker() {
   dsDialog(dsPickerHtml());
   var go = document.getElementById('pickGo');
+  var list = document.querySelector('.picklist');
+
   var sync = function () {
-    go.disabled = !document.querySelectorAll('.pickrow input:checked').length;
+    go.disabled = !list.querySelectorAll('input:checked').length;
   };
-  document.querySelectorAll('.pickrow input').forEach(function (c) {
-    c.addEventListener('change', sync);
-  });
+  list.addEventListener('change', sync);
   sync();
+
+  /*
+   * Delegated, and rows are inserted after their parent rather than the list
+   * being rebuilt — rebuilding would discard every tick the user had already
+   * made, which is the whole reason they opened the folder.
+   */
+  list.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.pickx[data-open]') : null;
+    if (!btn) return;
+    ev.preventDefault();
+
+    var i = Number(btn.getAttribute('data-open'));
+    var row = DS_PICK_ROWS[i];
+    var host = btn.closest('.pickrow');
+
+    if (btn.dataset.loaded === '1') {           // collapse
+      var d = (row.depth || 0);
+      var n = host.nextElementSibling;
+      while (n && Number(n.dataset.depth || 0) > d) {
+        var next = n.nextElementSibling; n.remove(); n = next;
+      }
+      btn.dataset.loaded = '0';
+      btn.textContent = '▸';
+      sync();
+      return;
+    }
+
+    btn.textContent = '…';
+    google.script.run
+      .withSuccessHandler(function (folders) {
+        btn.textContent = '▾';
+        btn.dataset.loaded = '1';
+        if (!folders || !folders.length) {
+          btn.textContent = '·';
+          btn.title = 'No folders inside';
+          return;
+        }
+        var after = host;
+        folders.forEach(function (f) {
+          var child = {
+            key: 'folder:' + f.id, name: f.name, sub: 'Folder in ' + row.name,
+            scope: row.scope, driveId: row.driveId, folderId: f.id,
+            depth: (row.depth || 0) + 1
+          };
+          DS_PICK_ROWS.push(child);
+          var idx = DS_PICK_ROWS.length - 1;
+          var tmp = document.createElement('div');
+          tmp.innerHTML = dsPickRowHtml(child, idx, false);
+          var el = tmp.firstChild;
+          el.dataset.depth = String(child.depth);
+          after.parentNode.insertBefore(el, after.nextSibling);
+          after = el;
+        });
+        sync();
+      })
+      .withFailureHandler(function () { btn.textContent = '▸'; })
+      .listFolders(row.folderId, row.driveId || '');
+  });
+
   document.getElementById('pickCancel').addEventListener('click', dsCloseDialog);
   go.addEventListener('click', function () {
-    DS_TARGETS = [].slice.call(document.querySelectorAll('.pickrow input:checked'))
+    DS_TARGETS = [].slice.call(list.querySelectorAll('input:checked'))
       .map(function (c) { return DS_PICK_ROWS[Number(c.getAttribute('data-i'))]; });
     dsCloseDialog();
     dsSyncScopeOptions();   // the dropdown must show what was actually chosen
