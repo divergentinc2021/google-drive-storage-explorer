@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v32';
+var APP_VERSION = 'v33';
 
 /*
  * The two desktop tools that finish the job this dashboard starts.
@@ -241,7 +241,26 @@ var V_SHARED_DRIVES = true;
  */
 var OWNERS = ['studiouih@uwc.ac.za'];
 
+/*
+ * Who is running this, via DRIVE rather than Session.
+ *
+ * Session.getActiveUser() needs the userinfo.email scope, which this project
+ * does not request — so it did not return an empty string, it threw:
+ *   "Specified permissions are not sufficient to call Session.getActiveUser"
+ * and every identity check refused everybody, including the owner.
+ *
+ * Adding that scope would force every user of the web app to re-consent. It is
+ * also unnecessary: the Drive scope is already granted, Drive's About already
+ * carries the address, and getBootstrap has been reading exactly this field
+ * since the beginning. Session stays as a fallback for the case where the Drive
+ * call is the one that fails.
+ */
 function currentUser_() {
+  try {
+    var about = Drive.About.get({ fields: 'user(emailAddress)' });
+    var mail = (about && about.user && about.user.emailAddress) || '';
+    if (mail) return mail.toLowerCase();
+  } catch (e) { /* fall through to Session */ }
   try { return (Session.getActiveUser().getEmail() || '').toLowerCase(); }
   catch (e) { return ''; }
 }
@@ -255,13 +274,23 @@ function isOwner_() {
  * never did.
  */
 function whoAmI() {
-  var active, effective;
+  var drive, active, effective;
+  try {
+    var a = Drive.About.get({ fields: 'user(emailAddress)' });
+    drive = (a && a.user && a.user.emailAddress) || '(empty)';
+  } catch (e) { drive = '(failed: ' + e.message + ')'; }
   try { active = Session.getActiveUser().getEmail() || '(empty)'; }
-  catch (e) { active = '(blocked: ' + e.message + ')'; }
+  catch (e) { active = '(blocked — needs the userinfo.email scope, which this project does not request)'; }
   try { effective = Session.getEffectiveUser().getEmail() || '(empty)'; }
-  catch (e) { effective = '(blocked)'; }
-  var out = { activeUser: active, effectiveUser: effective, owners: OWNERS,
-              accepted: isEditorOwner_() };
+  catch (e) { effective = '(blocked — same reason)'; }
+
+  var out = {
+    driveUser: drive,        // the one that decides; the others are informational
+    activeUser: active,
+    effectiveUser: effective,
+    owners: OWNERS,
+    accepted: isEditorOwner_()
+  };
   Logger.log(JSON.stringify(out, null, 2));
   return out;
 }
@@ -296,9 +325,9 @@ function ownerRefusal_(what) {
   var w = whoAmI();
   return new Error(
     'Only ' + OWNERS.join(', ') + ' may ' + what + '.\n' +
-    'This ran as: active=' + w.activeUser + ', effective=' + w.effectiveUser + '.\n' +
-    'If neither is an owner, sign in to the editor as one — or add the address ' +
-    'above to OWNERS in Code.gs.'
+    'Drive says this is running as: ' + w.driveUser + '\n' +
+    'If that is not an owner, sign in to the editor as one — or add that address ' +
+    'to OWNERS in Code.gs.'
   );
 }
 
