@@ -1226,9 +1226,15 @@ function dsSyncScopeOptions() {
 }
 
 function dsPickerHtml() {
+  /*
+   * "Everything I can see" first and ticked by default: it is what people
+   * actually scan. "My Drive" answers a narrower question — what counts against
+   * MY quota — and putting it first meant the common case needed two clicks and
+   * the default answer was the uncommon one.
+   */
   var rows = [
-    { key: 'owned', name: 'My Drive', sub: 'Files you own', scope: 'owned' },
-    { key: 'all', name: 'Everything I can see', sub: 'Includes files shared with you', scope: 'all' }
+    { key: 'all', name: 'Everything I can see', sub: 'Includes files shared with you', scope: 'all' },
+    { key: 'owned', name: 'My Drive', sub: 'Only files you own — what counts against your quota', scope: 'owned' }
   ];
   ((DS_BOOT && DS_BOOT.drives) || []).forEach(function (d) {
     rows.push({ key: 'drive:' + d.id, name: d.name, sub: 'Shared drive',
@@ -1240,10 +1246,13 @@ function dsPickerHtml() {
     'treemap, so you can compare them directly.</p>' +
     '<div class="picklist">' + rows.map(function (r, i) {
       return '<label class="pickrow"><input type="checkbox" data-i="' + i + '"' +
-        (r.key === 'owned' ? ' checked' : '') + '>' +
+        (r.key === 'all' ? ' checked' : '') + '>' +
         '<span class="nm">' + dsEsc(r.name) + '<small>' + dsEsc(r.sub) + '</small></span></label>';
     }).join('') + '</div>' +
-    '<div class="pickfoot"><button class="btn ghost" id="pickCancel">Cancel</button>' +
+    // dlgrow as well as pickfoot: dsDialog suppresses the built-in Close only
+    // for a body carrying .dlgrow, and this footer had its own class, so the
+    // picker kept showing TWO closes — its own Cancel and a stray one below.
+    '<div class="pickfoot dlgrow"><button class="btn ghost" id="pickCancel">Cancel</button>' +
     '<button class="btn" id="pickGo">Scan</button></div>';
 }
 var DS_PICK_ROWS = [];
@@ -2039,8 +2048,14 @@ function dsDialog(html) {
    * layout fault that depends on selector support is one that comes back on
    * some machine later. Setting the attribute is unconditional.
    */
+  /*
+   * CONVENTION: a dialog body that supplies its own buttons must put them in a
+   * .dlgrow. The selector also matches .pickfoot because that footer predates
+   * the convention and shipped with two Close buttons for it — belt and braces,
+   * since the failure is silent and only visible as a stray button.
+   */
   var form = d.querySelector('form');
-  if (form) form.hidden = !!body.querySelector('.dlgrow');
+  if (form) form.hidden = !!body.querySelector('.dlgrow, .pickfoot');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
 }
 
