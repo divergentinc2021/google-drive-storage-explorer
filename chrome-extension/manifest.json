@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Google Drive Storage Explorer",
   "short_name": "Storage Explorer",
-  "version": "1.0.0",
-  "description": "Opens the UIZ Drive storage treemap — where the storage mass sits, and what is safe to move to the NAS.",
+  "version": "1.0.1",
+  "description": "Opens the UIZ Drive storage treemap — where the storage mass sits, what is safe to move to the NAS, and what has to be converted out of Google first.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
