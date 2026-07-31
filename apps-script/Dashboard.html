@@ -773,8 +773,8 @@ function dsRenderConvBanner(can, cannot) {
     'Storage Mapper cannot copy them — a Doc, Sheet or Vid is a few hundred bytes of ' +
     'pointer, and the file itself only exists inside Google.' +
     (can
-      ? '<div style="margin-top:6px"><b>' + can.toLocaleString() + '</b> can be exported into ' +
-        'real files, written beside the originals so they sync down and copy like anything else.</div>'
+      ? '<div style="margin-top:6px"><b>' + can.toLocaleString() + '</b> can be exported into real ' +
+        'files, written into <b>My Drive → _Converted for NAS</b> so they sync down and can be copied.</div>'
       : '') +
     (cannot
       ? '<div style="margin-top:6px">' + cannot.toLocaleString() + ' cannot — Google offers no ' +
@@ -1181,9 +1181,13 @@ function dsShowConvertPlan(p) {
 
   dsDialog(
     '<h3>Convert Google files</h3>' +
-    '<p class="hint">Google exports each file and the result is written <b>beside the original</b>, ' +
-    'so it lands at the same path your NAS mirror expects. Nothing is modified, moved or deleted, ' +
-    'and files already converted are skipped.</p>' +
+    '<p class="hint">Google exports each file into <b>My Drive → _Converted for NAS</b>, keeping the ' +
+    'original\'s folder structure underneath it. Nothing is modified, moved or deleted, and files ' +
+    'already converted are skipped.</p>' +
+    '<div class="note"><small>Written to <b>your</b> Drive rather than beside the original, because ' +
+    'most originals live in other people\'s Drives: you cannot write there, and Drive for Desktop ' +
+    'would never sync the result down to your machine. Add that folder as a Google Drive source in ' +
+    'Storage Mapper once the files appear.</small></div>' +
     (conv.length
       ? '<div class="note"><b>' + conv.length.toLocaleString() + ' file(s) will be converted</b><div style="margin-top:5px">' +
         Object.keys(byExt).map(function (e) {
@@ -1255,9 +1259,9 @@ function dsConvertDone() {
           ? '<div>· …and ' + (DS_CONV_FAILED.length - 25).toLocaleString() + ' more</div>' : '') +
         '</div>'
       : '') +
-    '<div class="note"><small>Drive for Desktop will sync the new files down. Once they appear ' +
-    'locally, <b>Storage Mapper</b> copies them to the NAS like any other file — they now have ' +
-    'contents, so they pass its readability check.</small></div>' +
+    '<div class="note"><small>Drive for Desktop will sync <b>My Drive → _Converted for NAS</b> down. ' +
+    'Add that folder as a Google Drive source in <b>Storage Mapper</b> and it copies them to the NAS ' +
+    'like any other file — they have contents now, so they pass its readability check.</small></div>' +
     '<div class="dlgrow"><button class="btn" id="convClose">Close</button></div>');
   document.getElementById('convClose').addEventListener('click', function () {
     dsCloseDialog();

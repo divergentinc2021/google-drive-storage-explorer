@@ -25,7 +25,7 @@
  * stale. APP_VERSION must match the version clasp reports; APP_UPDATED is that
  * day, ISO so it cannot be misread as month-first.
  */
-var APP_VERSION = 'v13';
+var APP_VERSION = 'v14';
 var APP_UPDATED = '2026-07-31';
 
 // ─── capability flags ────────────────────────────────────────────────────────
@@ -526,12 +526,80 @@ function previewConversion(ids) {
  * the same continuation pattern the scan uses, because one Apps Script call
  * cannot outlive six minutes and a Drive with hundreds of Docs will not fit.
  */
+/*
+ * WHERE THE CONVERTED FILE GOES — and this was wrong in v11/v13.
+ *
+ * It used to be written beside the original, argued for because the NAS mirror
+ * path would then already be correct. That only holds for files you OWN. Run
+ * against "Everything I can see" and most originals live in other people's
+ * Drives, which produced exactly three failures and no successes:
+ *
+ *   "the file has no parent folder to write beside"   — shared with you, no
+ *                                                       visible parent
+ *   "Insufficient permissions for the specified parent" — readable, not writable
+ *   and even where it would have worked, Drive for Desktop does not sync other
+ *   people's folders, so the output could never have reached the NAS anyway.
+ *
+ * Everything now goes into one folder in YOUR My Drive, mirroring the original's
+ * path underneath it. You always have write permission there, it always syncs
+ * down, and no one else's Drive is touched. The mirrored path keeps the NAS
+ * layout meaningful, which was the only real argument for writing in place.
+ */
+var CONVERT_ROOT_NAME = '_Converted for NAS';
+
+function findOrCreateFolder_(name, parentId, cache) {
+  var key = parentId + '/' + name;
+  if (cache[key]) return cache[key];
+  var q = "name = '" + String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'") +
+          "' and '" + parentId + "' in parents and " +
+          "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  try {
+    var hit = Drive.Files.list({ q: q, fields: 'files(id)', pageSize: 1, supportsAllDrives: true });
+    if (hit.files && hit.files.length) { cache[key] = hit.files[0].id; return cache[key]; }
+  } catch (e) { /* fall through and create */ }
+  var made = Drive.Files.create({
+    name: name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId]
+  }, null, { supportsAllDrives: true });
+  cache[key] = made.id;
+  return made.id;
+}
+
+/**
+ * The original's folder names, outermost first. Best effort: a file shared from
+ * elsewhere may expose no readable parent, in which case it lands directly in
+ * the conversion root rather than failing — the point is to produce the file.
+ */
+function pathSegmentsFor_(file, nameCache) {
+  var segs = [], cur = file, guard = 0;
+  while (guard++ < 20) {
+    var pid = cur.parents && cur.parents[0];
+    if (!pid) break;
+    if (nameCache[pid] === null) break;                  // known unreadable
+    if (nameCache[pid] === undefined) {
+      try {
+        nameCache[pid] = Drive.Files.get(pid, {
+          fields: 'id,name,parents,driveId', supportsAllDrives: true
+        });
+      } catch (e) { nameCache[pid] = null; break; }
+    }
+    var p = nameCache[pid];
+    if (!p || !p.name) break;
+    segs.unshift(p.name);
+    cur = p;
+  }
+  return segs;
+}
+
 function convertNatives(ids) {
   var started = Date.now();
   var about = Drive.About.get({ fields: 'exportFormats' });
   var fmts = about.exportFormats || {};
   var token = ScriptApp.getOAuthToken();
   var done = [], skipped = [], failed = [], remaining = [];
+
+  var myRoot = Drive.Files.get('root', { fields: 'id' }).id;
+  var folderCache = {}, parentCache = {};
+  var convRoot = findOrCreateFolder_(CONVERT_ROOT_NAME, myRoot, folderCache);
 
   ids = ids || [];
   for (var i = 0; i < ids.length; i++) {
@@ -554,20 +622,29 @@ function convertNatives(ids) {
       continue;
     }
     var newName = f.name + '.' + pick.ext;
-    var parent = (f.parents && f.parents[0]) || null;
-    if (!parent) {
-      failed.push({ id: id, name: f.name, why: 'the file has no parent folder to write beside' });
+
+    // Mirror the original's folders under the conversion root, in My Drive.
+    var parent;
+    try {
+      var segs = pathSegmentsFor_(f, parentCache);
+      parent = convRoot;
+      for (var s = 0; s < segs.length; s++) parent = findOrCreateFolder_(segs[s], parent, folderCache);
+    } catch (e) {
+      failed.push({ id: id, name: f.name, why: 'could not prepare a destination folder: ' + e.message });
       continue;
     }
 
-    // Already converted on an earlier run — additive means never doing it twice.
+    /*
+     * Already converted on an earlier run — additive means never doing it twice.
+     * Scoped to the destination folder. The previous version searched with
+     * corpora:'allDrives', which reported 110 files as "already done" while not
+     * one converted copy existed; a check that can produce a false positive is
+     * worse than no check, because it silently skips real work.
+     */
     try {
-      var q = "name = '" + String(newName).replace(/'/g, "\\'") + "' and '" +
-              parent + "' in parents and trashed = false";
-      var hit = Drive.Files.list({
-        q: q, fields: 'files(id)', pageSize: 1,
-        supportsAllDrives: true, includeItemsFromAllDrives: true, corpora: 'allDrives'
-      });
+      var q = "name = '" + String(newName).replace(/\\/g, '\\\\').replace(/'/g, "\\'") +
+              "' and '" + parent + "' in parents and trashed = false";
+      var hit = Drive.Files.list({ q: q, fields: 'files(id)', pageSize: 1, supportsAllDrives: true });
       if (hit.files && hit.files.length) {
         skipped.push({ id: id, name: newName, why: 'already converted' });
         continue;
